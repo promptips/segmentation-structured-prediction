@@ -163,4 +163,195 @@ void F_Filter::precomputeFeatures(Slice_P& slice)
       laplacianFilter->SetSigma(scales[sc]);
       laplacianFilter->SetInput(inputImage);
       rescaleFilter->SetInput(laplacianFilter->GetOutput());
-      rescaleFilter->GetOu
+      rescaleFilter->GetOutput()->GetPixelContainer()->SetImportPointer(node_features, imageSize, false);
+      rescaleFilter->Update();
+
+      createSupernodeBasedFeatures(slice, node_features, featIdx);
+      
+#if OUTPUT_FILTER_IMAGES
+      typedef itk::ImageFileWriter<OutputImageType> WriterType;
+      WriterType::Pointer writer = WriterType::New();
+      stringstream sout;
+      sout << "log_" << sc << ".tif";
+      printf("[F_Filter] Writing image %s\n", sout.str().c_str());
+      writer->SetFileName(sout.str().c_str());
+      writer->SetInput(rescaleFilter->GetOutput());
+      writer->Update();
+#endif     
+ 
+      ++featIdx;
+    }
+  }
+
+  // hessian
+  featType = 2;
+  for(int sc = 0; sc < numScales; ++sc) {
+    typedef itk::HessianRecursiveGaussianImageFilter<InputImageType,MatrixImageType> HessianFilterType;
+    HessianFilterType::Pointer hessianFilter = HessianFilterType::New();
+    hessianFilter->SetSigma(scales[sc]);
+    hessianFilter->SetInput(inputImage);
+    hessianFilter->Update();
+
+    // Eigenvalues of Hessian
+    typedef itk::SymmetricEigenAnalysisImageFilter<MatrixImageType,VectorImageType> EigvalFilter;
+    EigvalFilter::Pointer eigvalFilter = EigvalFilter::New();
+    eigvalFilter->SetDimension(nDim);
+
+#if 0  // whether to compute eigenvalues for smoothed hessian (as in structure tensor)
+    typedef itk::RecursiveGaussianImageFilter<MatrixImageType,MatrixImageType> SmoothingFilter;
+    SmoothingFilter::Pointer smoothingFilters[nDim];
+    for(int i=0; i<nDim; i++) {
+      smoothingFilters[i] = SmoothingFilter::New();
+      smoothingFilters[i]->ReleaseDataFlagOn();
+      smoothingFilters[i]->SetSigma(scales[sc]);
+      smoothingFilters[i]->SetDirection(i);
+      if(i == 0)	smoothingFilters[i]->SetInput(hessianFilter->GetOutput());
+      else		smoothingFilters[i]->SetInput(smoothingFilters[i-1]->GetOutput());
+    }
+    eigvalFilter->SetInput(smoothingFilters[nDim-1]->GetOutput());
+#else
+    eigvalFilter->SetInput(hessianFilter->GetOutput());
+#endif
+
+    hessianFilter->ReleaseDataFlagOn();
+						
+    for(int ch = 0; ch<channelCounts[featType]; ch++) {
+      assert(featIdx < sizeFV);
+      VectorElementSelectionFilter::Pointer vectorElementFilter = VectorElementSelectionFilter::New();
+      vectorElementFilter->ReleaseDataFlagOn();
+      vectorElementFilter->SetIndex(2-ch);  // reverse order, so largest eigenvalue first
+      vectorElementFilter->SetInput(eigvalFilter->GetOutput());
+      rescaleFilter->SetInput(vectorElementFilter->GetOutput());
+      rescaleFilter->GetOutput()->GetPixelContainer()->SetImportPointer(node_features, imageSize, false);
+      rescaleFilter->Update();
+     
+      createSupernodeBasedFeatures(slice, node_features, featIdx);
+
+#if OUTPUT_FILTER_IMAGES
+      typedef itk::ImageFileWriter<OutputImageType> WriterType;
+      WriterType::Pointer writer = WriterType::New();
+      stringstream sout;
+      sout << "eig_" << sc << "_" << ch << ".tif";
+      printf("[F_Filter] Writing image %s\n", sout.str().c_str());
+      writer->SetFileName(sout.str().c_str());
+      writer->SetInput(rescaleFilter->GetOutput());
+      writer->Update();
+#endif     
+ 
+      ++featIdx;
+    }
+  }
+
+  // structure tensor
+  featType = 3;
+  printf("[F_Filter] Eigenvalues of structure tensor...\n");
+
+  // Threshold filter used mainly because the <...>RecursiveGaussianFilter in ITK is very imprecise
+  // and result in negative values where they should be strictly >= 0.
+  typedef itk::ThresholdImageFilter<FloatImageType> ThresholdFilter;
+  ThresholdFilter::Pointer zeroMinThresholdFilter = ThresholdFilter::New();
+  zeroMinThresholdFilter->ReleaseDataFlagOn();
+  zeroMinThresholdFilter->ThresholdBelow(0);
+  zeroMinThresholdFilter->SetOutsideValue(0);
+
+  for(int sc = 0; sc < numScales; ++sc) {
+
+    typedef itk::StructureTensorRecursiveGaussianImageFilter<InputImageType, MatrixImageType> STensorFilterType;
+    STensorFilterType::Pointer stensorFilter = STensorFilterType::New();
+    stensorFilter->SetSigma(scales[sc]);
+    //stensorFilter->SetRho(scales[sc]);
+    stensorFilter->SetSigma(scales[sc]);
+    stensorFilter->SetInput(inputImage);
+
+    typedef itk::SymmetricEigenAnalysisImageFilter<MatrixImageType,VectorImageType> EigvalFilter;
+    EigvalFilter::Pointer eigvalFilter = EigvalFilter::New();
+    eigvalFilter->SetDimension(nDim);
+    eigvalFilter->SetInput(stensorFilter->GetOutput());
+    stensorFilter->ReleaseDataFlagOn();
+						
+    for(int ch = 0; ch < channelCounts[featType]; ch++) {
+      VectorElementSelectionFilter::Pointer vectorElementFilter = VectorElementSelectionFilter::New();
+      vectorElementFilter->ReleaseDataFlagOn();
+      vectorElementFilter->SetIndex(2-ch);  // reverse order, so largest eigenvalue first
+      vectorElementFilter->SetInput(eigvalFilter->GetOutput());
+      zeroMinThresholdFilter->SetInput(vectorElementFilter->GetOutput());
+      rescaleFilter->GetOutput()->GetPixelContainer()->SetImportPointer(node_features, imageSize, false);
+      rescaleFilter->SetInput(zeroMinThresholdFilter->GetOutput());
+      rescaleFilter->Update();
+
+      createSupernodeBasedFeatures(slice, node_features, featIdx);
+
+      ++featIdx;
+    }
+  }
+
+  // switch pointers
+  delete[] node_features;
+}
+
+void F_Filter::createSupernodeBasedFeatures(Slice_P& slice, uchar* node_features, int featIdx)
+{
+  node n;
+  const ulong size_slice = slice.getWidth() * slice.getHeight();
+  const map<sidType, supernode* >& _supernodes = slice.getSupernodes();
+  for(map<sidType, supernode* >::const_iterator it = _supernodes.begin();
+      it != _supernodes.end(); it++) {
+
+    // use response at the center of every supernode
+    it->second->getCenter(n);
+    ulong cubeIdx = n.z*size_slice + n.y*slice.getWidth() + n.x;
+    features[featIdx][it->first] = node_features[cubeIdx];
+
+    // could also average
+    /*
+      nodeIterator ni = s->getIterator();
+      ni.goToBegin();
+      while(!ni.isAtEnd()) {
+      ni.get(n);
+      ni.next();
+
+      pValue = features[n.z*size_slice + n.y*slice3d.width + n.x];   
+      }
+    */
+
+  }
+}
+
+int F_Filter::getSizeFeatureVectorForOneSupernode()
+{
+  return sizeFV;
+}
+
+bool F_Filter::getFeatureVector(osvm_node *n,
+                              const int x,
+                              const int y)
+{
+  assert(0);
+  return true;
+}
+
+bool F_Filter::getFeatureVectorForOneSupernode(osvm_node *x, Slice* slice, int supernodeId)
+{
+  assert(0);
+  return true;
+}
+
+bool F_Filter::getFeatureVectorForOneSupernode(osvm_node *x, Slice3d* slice3d, int supernodeId)
+{
+  for(int i = 0; i < sizeFV; i++) {
+    x[i].value = features[i][supernodeId];
+  }
+
+  return true;
+}
+
+bool F_Filter::getFeatureVector(osvm_node *x,
+                                Slice3d* slice3d,
+                                const int gx,
+                                const int gy,
+                                const int gz)
+{
+  assert(0);
+  return true;
+}
+
