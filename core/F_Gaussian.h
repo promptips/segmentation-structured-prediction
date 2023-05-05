@@ -12,34 +12,24 @@
 // Contact <aurelien.lucchi@gmail.com> for comments & bug reports      //
 /////////////////////////////////////////////////////////////////////////
 
-#ifndef F_Filter_H
-#define F_Filter_H
+#ifndef F_GAUSSIAN_H
+#define F_GAUSSIAN_H
 
-#include "Feature.h"
-#include "oSVM.h"
 #include "Slice.h"
 #include "Slice3d.h"
-#include "Slice_P.h"
+#include "Feature.h"
 
 //-------------------------------------------------------------------------TYPES
 
 //-------------------------------------------------------------------------CLASS
 
-class F_Filter : public Feature
+class F_Gaussian : public Feature
 {
  public:	
 
-  F_Filter(Slice_P& slice);
+  F_Gaussian();
 
-  ~F_Filter();
-
-  void createSupernodeBasedFeatures(Slice_P& slice, uchar* node_features, int featIdx);
-
-  int getSizeFeatureVectorForOneSupernode();
-
-  bool getFeatureVector(osvm_node *n,
-                        const int x,
-                        const int y);
+  int getSizeFeatureVector();
 
   /**
    * Extract a feature vector for a given supernode in a 2d slice
@@ -54,18 +44,6 @@ class F_Filter : public Feature
   bool getFeatureVectorForOneSupernode(osvm_node *x,
                                        Slice3d* slice3d,
                                        const int supernodeId);
-
-  bool getFeatureVector(osvm_node *x,
-                        Slice3d* slice3d,
-                        const int gx,
-                        const int gy,
-                        const int gz);
-
-  void precomputeFeatures(Slice_P& slice);
-
-private:
-  uchar** features;
-  int sizeFV;
 };
 
-#endif // F_Filter_H
+#endif // F_GAUSSIAN_H
