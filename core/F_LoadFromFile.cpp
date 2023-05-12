@@ -135,4 +135,241 @@ void F_LoadFromFile::loadSupervoxelBasedFeaturesFromTIF(Slice3d& slice3d,
   PRINT_MESSAGE("[F_LoadFromFile] Allocating memory for %ld nodes and %d features\n",
                 lNodes.size(), featureSize);
 #if !USE_SPARSE_STRUCTURE
-  features = new fileFeature
+  features = new fileFeatureType*[nFeatures];
+#endif
+  for(vector<sidType>::iterator itNode = lNodes.begin();
+      itNode != lNodes.end(); itNode++) {
+    features[*itNode] = new fileFeatureType[featureSize];
+  }
+
+  // store features in memory
+  fileFeatureType value;
+  ulong idx;
+  int fileId = 0;
+  supernode* s;
+  node center;
+  for(vector<string>::const_iterator itFile = lFeatureFilenames.begin();
+      itFile != lFeatureFilenames.end(); itFile++)
+    {
+
+#if OUTPUT_FEATURES_TO_TXT_FILE
+      stringstream sout;
+      sout << "features_" << fileId << ".txt";
+      ofstream ofsFeat(sout.str().c_str());
+#endif
+
+      string fullpath = getAbsoluteFeaturePath(featurePath, slice3d.inputDir);
+      fullpath += *itFile;
+      PRINT_MESSAGE("[F_LoadFromFile] Loading %s\n", fullpath.c_str());
+      Slice3d* inputCube = new Slice3d(fullpath.c_str());
+      for(vector<sidType>::iterator itNode = lNodes.begin();
+          itNode != lNodes.end(); itNode++)
+        {
+          s = slice3d.getSupernode(*itNode);
+          s->getCenter(center);
+
+#if UPSIDE_DOWN_FEATURES
+          // Bug fix : Feture cubes from Yunpeng are upside-down
+          center.y = slice3d.height - center.y;
+#endif
+
+          idx = slice3d.getIndex(center.x,center.y,center.z);
+          // read data
+          value = inputCube->raw_data[idx];
+          features[*itNode][fileId] = (fileFeatureType)value;
+
+#if OUTPUT_FEATURES_TO_TXT_FILE
+          ofsFeat << (double) value << endl;
+#endif          
+        }
+      delete inputCube;
+
+#if OUTPUT_FEATURES_TO_TXT_FILE
+      ofsFeat.close();
+#endif
+
+      fileId++;
+    }
+  PRINT_MESSAGE("[F_LoadFromFile] All feature files are now loaded in memory\n");
+}
+
+void F_LoadFromFile::loadSupervoxelBasedFeaturesFromSetOfBinaries(Slice3d& slice3d,
+                                                                  const vector<string>& lFeatureFilenames,
+                                                                  vector<sidType>& lNodes)
+{
+  featureSize = lFeatureFilenames.size();
+  nFeatures = lNodes.size();
+  PRINT_MESSAGE("[F_LoadFromFile] Allocating memory for %ld nodes and %d features\n",
+                lNodes.size(), featureSize);
+#if !USE_SPARSE_STRUCTURE
+  features = new fileFeatureType*[nFeatures];
+#endif
+  for(vector<sidType>::iterator itNode = lNodes.begin();
+      itNode != lNodes.end(); itNode++) {
+    features[*itNode] = new fileFeatureType[featureSize];
+  }
+
+  // store features in memory
+  fileFeatureType value;
+  ulong idx;
+  int fileId = 0;
+  supernode* s;
+  node center;
+  for(vector<string>::const_iterator itFile = lFeatureFilenames.begin();
+      itFile != lFeatureFilenames.end(); itFile++)
+    {
+      ifstream ifsF(itFile->c_str(), ios::binary);
+      if(ifsF.fail()) {
+        printf("[F_LoadFromFile] Failed to load %s\n", itFile->c_str());
+        exit(-1);
+      }
+      for(vector<sidType>::iterator itNode = lNodes.begin();
+          itNode != lNodes.end(); itNode++) {
+        s = slice3d.getSupernode(*itNode);
+        s->getCenter(center);
+        idx = slice3d.getIndex(center.x,center.y,center.z);
+        ifsF.seekg (idx, ios::beg);
+        // read data
+        ifsF.read((char*)&value,sizeof(fileFeatureType));
+        features[*itNode][fileId] = value;
+        //printf("f %ld %d %d %d %d\n",idx,(int)value,*itNode,fileId,(int)features[*itNode][fileId]);
+      }
+      ifsF.close();
+      fileId++;
+    }
+  PRINT_MESSAGE("[F_LoadFromFile] All feature files are now loaded in memory\n");
+}
+
+
+void F_LoadFromFile::loadSupervoxelBasedFeaturesFromBinary(Slice3d& slice3d,
+                                                           const vector<string>& lFeatureFilenames,
+                                                           vector<sidType>& lNodes)
+{
+  uint featureSizePerFile = 0;
+  string config_tmp;
+  if(Config::Instance()->getParameter("featureSizePerFile", config_tmp)) {
+    featureSizePerFile = atoi(config_tmp.c_str());
+  }
+
+  featureSize = featureSizePerFile;
+  nFeatures = lNodes.size();
+  PRINT_MESSAGE("[F_LoadFromFile] Allocating memory for %ld nodes and %d features\n",
+                lNodes.size(), featureSize);
+#if !USE_SPARSE_STRUCTURE
+  features = new fileFeatureType*[nFeatures];
+#endif
+  for(vector<sidType>::iterator itNode = lNodes.begin();
+      itNode != lNodes.end(); itNode++) {
+    features[*itNode] = new fileFeatureType[featureSize];
+  }
+
+  for(vector<string>::const_iterator itFile = lFeatureFilenames.begin();
+      itFile != lFeatureFilenames.end(); itFile++)
+    {
+      printf("[F_LoadFromFile] Loading %s\n", itFile->c_str());
+
+      /*
+       * File format :
+       * <unsigned int numRows>
+       * <unsigned int numCols>
+       * <numRows * numCols float values (32-bit float data)>
+       * The data is in column-major format, and each row belongs to a given supervoxel.
+       */
+
+      string fulllpath = featurePath + *itFile;
+      ifstream ifsF(fulllpath.c_str(), ios::binary);
+      if(ifsF.fail()) {
+        printf("[F_LoadFromFile] Failed to load %s\n", itFile->c_str());
+        exit(-1);
+      }
+      uint nRows;
+      uint nCols;
+      ifsF.read((char*)&nRows, sizeof(uint));
+      ifsF.read((char*)&nCols, sizeof(uint));
+      ulong n = nRows*nCols;
+      printf("[F_LoadFromFile] nRows = %d, nCols = %d, nSupernodes = %ld, featureSize = %d. Need %f Mb\n",
+             nRows, nCols, lNodes.size(), featureSize, n/(1024.0*1024.0));
+      assert(nRows >= lNodes.size());
+      assert(nCols >= (uint)featureSize);
+      bool useSparseFeatures = lNodes.size() < nRows;
+      float* _features = new float[n];
+      ifsF.read((char*)_features, sizeof(float)*n);
+
+#if 1
+      if(useSparseFeatures) {
+        for(int i = 0; i < featureSize; ++i) {
+          ulong idx = i*nRows;
+          for(vector<sidType>::iterator itNode = lNodes.begin();
+              itNode != lNodes.end(); itNode++) {
+            ulong fidx = idx + *itNode;
+            if(fidx > n) {
+              printf("f %d/%d, %d/%d, %ld %ld %ld\n", i, featureSize, *itNode, nRows, idx, fidx, n); 
+              exit(-1);
+            }
+            assert(fidx < n);
+            features[*itNode][i] = _features[fidx];
+          }
+        }
+      } else {
+        ulong fidx = 0;
+        for(int j = 0; j < featureSize; ++j) {
+          for(uint i = 0; i < nRows; ++i) {
+            features[i][j] = _features[fidx];
+            ++fidx;
+          }
+        }
+      }
+#else
+      if(useSparseFeatures) {
+        for(vector<sidType>::iterator itNode = lNodes.begin();
+            itNode != lNodes.end(); itNode++) {
+          ulong idx = (*itNode)*nCols;
+          for(int i = 0; i < featureSize; ++i) {
+            ulong fidx = idx + i;
+            if(fidx > n) {
+              printf("f %d/%d, %d/%d, %ld %ld %ld\n", i, featureSize, *itNode, nRows, idx, fidx, n); 
+              exit(-1);
+            }
+            assert(fidx < n);
+            features[*itNode][i] = _features[fidx];
+          }
+        }
+      } else {
+        ulong fidx = 0;
+        for(uint i = 0; i < nRows; ++i) {
+          for(int j = 0; j < featureSize; ++j) {
+            features[i][j] = _features[fidx];
+            ++fidx;
+          }
+        }
+      }
+#endif
+
+      ifsF.close();
+      delete[] _features;
+    }
+
+  PRINT_MESSAGE("[F_LoadFromFile] Rescaling features...\n");
+  // rescale features
+  string range_filename = slice3d.getName() + ".range";
+  ofstream ofs_range(range_filename.c_str());
+  for(int i = 0; i < featureSize; ++i) {
+    fileFeatureType min_value = features[lNodes[0]][i];
+    fileFeatureType max_value = features[lNodes[0]][i];
+    for(int featIdx = 0; featIdx < nFeatures; ++featIdx) {
+      fileFeatureType* _feat = features[featIdx];
+      if(_feat[i] < min_value) {
+        min_value = _feat[i];
+      }
+      if(_feat[i] > max_value) {
+        max_value = _feat[i];
+      }
+    }
+    PRINT_MESSAGE("[F_LoadFromFile] Feature %d : (min,max)=(%g,%g)\n", i,
+                  min_value, max_value);
+
+    ofs_range << min_value << " " << max_value << endl;
+
+    fileFeatureType df = max_value - min_value;
+    for(int featIdx = 0; featIdx < nFeatures; ++featIdx) {
+      fileFeatureType* _
