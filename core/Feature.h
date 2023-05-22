@@ -150,4 +150,29 @@ class Feature
 
   static void precomputeFeatures(Slice_P* slice, Feature* feature, map<ulong, float*> output);
 
-  static void rescaleCache(Slice_P* slice
+  static void rescaleCache(Slice_P* slice);
+
+  virtual void rescale(Slice_P* slice) { ; }
+
+  void save(Slice_P& slice, const char* filename);
+
+  void saveCube(Slice_P& slice, const char* filename, int feature_dimension);
+
+  void saveSparse(Slice_P& slice, const char* filename);
+
+  void updateFeatureStats(Slice_P* slice);
+
+ protected:
+
+  osvm_node* mean;
+  osvm_node* variance;
+
+  // TODO(lucchi) : Delete features !
+  static map<ulong, map<ulong, Feature*> > feature_cache;
+
+ private:
+  bool includeNeighbors;
+
+};
+
+#endif // FEATURE
