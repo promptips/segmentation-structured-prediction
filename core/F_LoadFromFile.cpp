@@ -1106,4 +1106,86 @@ void F_LoadFromFile::rescale(Slice_P* slice)
   }
 }
 
-void F_LoadFromFile::rescale
+void F_LoadFromFile::rescale()
+{
+  int max_index = featureSize + 1;
+
+  osvm_node* mean;
+  oSVM::initSVMNode(mean, max_index);
+  osvm_node* variance;
+  oSVM::initSVMNode(variance, max_index);
+
+  for(int i = 0; i < featureSize; ++i) {
+    mean[i].value = 0;
+  }
+  for(int i = 0; i < featureSize; ++i) {
+    variance[i].value = 0;
+  }
+
+  for(int n = 1; n <= nFeatures; ++n) {
+
+    fileFeatureType* x = features[n-1];
+
+    // use running average to avoid overflow
+    for(int i = 0; i < featureSize; ++i) {
+      mean[i].value = ((n-1.0)/n*mean[i].value) + x[i]/n;
+    }
+
+    // New variance V(n) = (n-1*V(n-1) + (x(n)-M(n))^2)/(n)
+    for(int i = 0; i < featureSize; ++i) {
+      variance[i].value = (((n-1.0)*variance[i].value) + (x[i]-mean[i].value)*(x[i]-mean[i].value))/n;
+    }
+
+  }
+
+  printf("Mean:");
+  for(int i = 0; i < featureSize; ++i) {
+    printf("%g ", mean[i].value);
+  }
+  printf("\n");
+
+  printf("Variance:");
+  for(int i = 0; i < featureSize; ++i) {
+    printf("%g ", variance[i].value);
+  }
+  printf("\n");
+
+  // prevent division by 0
+  for(int i = 0; i < featureSize; ++i) {
+    if(variance[i].value == 0) {
+      variance[i].value = 1.0;
+    }
+  }
+
+  const int sid_to_print = 100;
+
+  for(int n = 0; n < nFeatures; ++n) {
+
+    fileFeatureType* x = features[n];
+
+    if(n == sid_to_print) {
+      printf("x:");
+      for(int i = 0; i < featureSize; ++i) {
+        printf("%g ", x[i]);
+      }
+      printf("\n");
+    }
+
+    for(int i = 0; i < featureSize; ++i) {
+      x[i] -= mean[i].value;
+      x[i] /= variance[i].value;
+    }
+
+    if(n == sid_to_print) {
+      printf("x:");
+      for(int i = 0; i < featureSize; ++i) {
+        printf("%g ", x[i]);
+      }
+      printf("\n");
+    }
+
+  }
+
+  delete[] mean;
+  delete[] variance;
+}
