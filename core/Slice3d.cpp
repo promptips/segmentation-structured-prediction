@@ -197,4 +197,270 @@ int Slice3d::raw2Double(double**& ptr_data)
   return 0;
 }
 
-int Slice3d::raw2RGB(unsigne
+int Slice3d::raw2RGB(unsigned int**& ptr_data)
+{
+  // supervoxel library needs a cube made of ints so we have to convert the cube
+  // ask for enough memory for the texels and make sure we got it before proceeding
+  ptr_data = new unsigned int* [depth];
+  if (ptr_data == 0) {
+    printf("[Slice3d] Error while allocating memory for 3d volume\n");
+    return -1;
+  }
+
+  int i = 0;
+  char c;
+  for(int z=0;z<depth;z++) {
+    ptr_data[z] = new unsigned int[sliceSize];
+    for(int xy = 0;xy<sliceSize;xy++) {
+      c = raw_data[i];
+      ptr_data[z][xy] = c | (c << 8) | (c << 16);
+      i++;
+    }
+  }
+  return 0;
+}
+
+void Slice3d::loadSupervoxels(const char* imageDir)
+{
+  cubeness = SUPERVOXEL_DEFAULT_CUBENESS;
+  loadSupervoxels(imageDir, DEFAULT_VOXEL_STEP, SUPERVOXEL_DEFAULT_CUBENESS);
+}
+
+void Slice3d::loadSupervoxels(const char* imageDir, const int voxel_step, const float _cubeness)
+{
+  cubeness = _cubeness;
+  supernode_step = voxel_step;
+  stringstream soutSupervoxels_nrrd;
+  soutSupervoxels_nrrd << imageDir << "supervoxels_" << voxel_step << "_" << cubeness << ".nrrd";
+  if(fileExists(soutSupervoxels_nrrd.str().c_str())) {
+    uint* outputData = 0;
+    int width;
+    int height;
+    int depth;
+    PRINT_MESSAGE("[Slice3d] Loading supervoxels from nrrd file %s\n", soutSupervoxels_nrrd.str().c_str());
+#ifdef USE_ITK
+    importNRRDCube_uint(soutSupervoxels_nrrd.str().c_str(), outputData, width, height, depth);
+#else
+    PRINT_MESSAGE("[Slice3d] Set USE_ITK to true to import NRRD cubes\n");
+    exit(-1);
+#endif
+    importSupervoxelsFromBuffer((const uint*)outputData, width, height, depth);
+    delete[] outputData;
+  } else {
+    stringstream soutSupervoxels;
+    soutSupervoxels << imageDir << "supervoxels_" << voxel_step << "_" << cubeness;
+    if(fileExists(soutSupervoxels.str().c_str())) {
+      PRINT_MESSAGE("[Slice3d] Loading supervoxels from %s\n", soutSupervoxels.str().c_str());
+      importSupervoxelsFromBinaryFile(soutSupervoxels.str().c_str());
+    } else {
+      PRINT_MESSAGE("[Slice3d] Generating supervoxels (cubeness=%d)\n", cubeness);
+      generateSupervoxels(cubeness);
+      if(strlen(imageDir) > 0) {
+        PRINT_MESSAGE("[Slice3d] Exporting supervoxels to %s\n", soutSupervoxels.str().c_str());
+        exportSupervoxelsToBinaryFile(soutSupervoxels.str().c_str());
+      }
+    }
+  }
+}
+
+void Slice3d::generateSupervoxels(const double _cubeness)
+{
+  cubeness = _cubeness;
+  int slice_size = width*height;
+
+  // voxel step should not be greater than the number of slices
+  if(supernode_step > depth) {
+    supernode_step = depth;
+  }
+
+  // klabels is a 2d array indexed by z coordinates. Slices are ordered by yx.
+#ifndef USE_REVERSE_INDEXING
+  sidType** klabels;
+#endif
+
+  PRINT_MESSAGE("[Slice3d] Generating supervoxels. vol_size=(%d, %d, %d). voxel_step=%d. cubeness=%d, %fMb needed\n",
+                width,height,depth,supernode_step,cubeness,slice_size*depth/(1024.0*1024.0));
+
+  if(cubeness == -1)
+    {
+      // use cubical supervoxels
+      PRINT_MESSAGE("[Slice3d] Uniform sampling...\n");
+      klabels = new sidType*[depth];
+      for(int z=0;z<depth;z++) {
+        klabels[z] = new sidType[slice_size];
+      }
+
+      int sid = 0;
+      for(int z=0;z<depth; z += supernode_step)
+        {
+          for(int x=0;x<width; x+= supernode_step)
+            for(int y=0;y<height; y += supernode_step)
+              {
+                // do not use voxel+step
+                for(int sz=z;sz<min(depth,(sizeSliceType)z+supernode_step);sz++)
+                  {
+                    for(int sx=x;sx<min(width,(sizeSliceType)x+supernode_step);sx++)
+                      for(int sy=y;sy<min(height,(sizeSliceType)y+supernode_step);sy++)
+                        klabels[sz][sy*width+sx] = sid;
+                  }
+                sid++;
+              }
+        }
+      nLabels = sid;
+      PRINT_MESSAGE("[Slice3d] Uniform sampling done. %d labels created\n",nLabels);
+    }
+  else  
+    {
+      double** ptr_data;
+      raw2Double(ptr_data);
+      LKM* lkm = new LKM(false); // do not free memory
+      lkm->DoSupervoxelSegmentationForGrayVolume(ptr_data,
+                                                 (int)width,(int)height,(int)depth,
+                                                 klabels,
+                                                 nLabels,
+                                                 (int)supernode_step,
+                                                 cubeness);
+
+      PRINT_MESSAGE("[Slice3d] Supervoxelization done\n");
+      for(int z=0;z<depth;z++) {
+        delete[] ptr_data[z];
+      }
+      delete[] ptr_data;
+
+      delete lkm;
+    }
+
+  createIndexingStructures(klabels);
+}
+
+
+void Slice3d::createIndexingStructures(sidType** _klabels, bool force)
+{
+  if(mSupervoxels !=0) {
+    if(force) {
+      for(map< sidType, supernode* >::iterator it = mSupervoxels->begin();
+          it != mSupervoxels->end();it++) {
+        delete it->second;
+      }
+      delete mSupervoxels;
+    } else {
+      printf("[Slice3d] Error in createIndexingStructures : structures already existing\n");
+      return;
+    }
+  }
+
+  ulong slice_size = width*height;
+  // Creating indexation structure
+  PRINT_MESSAGE("[Slice3d] Creating indexing structure. %fMb needed\n",
+                (sizeof(supernode)*slice_size*depth/(supernode_step*supernode_step)
+                 + sizeof(node) * slice_size*depth)/(1024.0*1024.0));
+
+  mSupervoxels = new map< sidType, supernode* >;
+  supernode* s;
+  map<sidType,supernode*>::iterator itVoxel;
+
+  PRINT_MESSAGE("[Slice3d] Cube size = (%d,%d,%d)=%ld voxels\n", width, height, depth,slice_size*depth);
+
+  sidType sid;
+
+#ifdef USE_RUN_LENGTH_ENCODING
+  sidType previousSid;
+  lineContainer* line;
+
+  for(int d=0;d<depth;d++) { 
+    for(int y=0;y<height;y++) {
+
+      // create new line
+      line = new lineContainer;
+      line->coord.x = 0;
+      line->coord.y = y;
+      line->coord.z = d;
+      sid = _klabels[d][y*width]; // x=0
+
+      // add line to supernode
+      itVoxel = mSupervoxels->find(sid);
+      if(itVoxel == mSupervoxels->end()) {
+        // Create new supernode and add it to the list
+        s = new supernode;
+        s->id = sid;
+        (*mSupervoxels)[sid] = s;
+      } else {
+        // Supernode already exists
+        s = itVoxel->second;
+      }
+
+      s->addLine(line);
+
+      previousSid = sid;
+
+      for(int x = 0;x < width;x++) {
+        sid = _klabels[d][y*width+x];
+        if(sid == previousSid) {
+          line->length++;
+        } else {
+          // create new line
+          line = new lineContainer;
+          line->coord.x = x;
+          line->coord.y = y;
+          line->coord.z = d;
+          line->length = 1;
+          previousSid = sid;
+
+          // add line to supernode
+          itVoxel = mSupervoxels->find(sid);
+          if(itVoxel == mSupervoxels->end()) {
+            // Create new supernode and add it to the list
+            s = new supernode;
+            s->id = sid;
+            (*mSupervoxels)[sid] = s;
+          } else {
+            // Supernode already exists
+            s = itVoxel->second;
+          }
+
+          s->addLine(line);
+        }
+      }
+    }
+  }
+#else
+  for(int d=0;d<depth;d++)
+    for(int y=0;y<height;y++)
+      for(int x=0;x<width;x++) {
+        sid = _klabels[d][y*width+x];
+        itVoxel = mSupervoxels->find(sid);
+        if(itVoxel == mSupervoxels->end()) {
+          // Create new supernode and add it to the list
+          s = new supernode;
+          s->id = sid;
+          (*mSupervoxels)[sid] = s;
+        } else {
+          // Supernode already exists
+          s = itVoxel->second;
+        }
+
+        // Add node to the supernode
+        node* p = new node;
+        p->z = d;
+        p->y = y;
+        p->x = x;
+        s->addNode(p);
+      }
+#endif
+
+  PRINT_MESSAGE("[Slice3d] %d supervoxels created\n", (int)mSupervoxels->size());
+
+  /*
+#if USE_LONG_RANGE_EDGES
+  PRINT_MESSAGE("[Slice3d] Adding long range edges...\n");
+  addLongRangeEdges();
+  return;
+#endif
+  */
+
+  if(loadNeighbors) {
+    PRINT_MESSAGE("[Slice3d] Indexing neighbors...\n");
+
+    stringstream sout_neighbors;
+    sout_neighbors << inputDir << "neighbors_" << supernode_step << "_" << cubeness;
+    if(fileE
