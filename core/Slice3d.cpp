@@ -1374,4 +1374,289 @@ void Slice3d::generateSupernodeLabelFromMaskDirectory(const char* mask_dir,
     return;
   }
 
-  // 
+  // load all the mask images in a cube of data
+  uchar* mask_data;
+  int _width;
+  int _height;
+  int _depth = -1;
+  loadFromDir(mask_dir, mask_data,
+              _width, _height, &_depth);
+
+  // check if ground-truth cube has to be resized
+  if(width != _width || height != _height || depth != _depth) {
+    printf("[Slice3d] Resizing mask data (%d,%d,%d) -> (%d,%d,%d)\n",
+           _width, _height, _depth, width, height, depth);
+    ulong image_size = (ulong)_width*(ulong)_height;
+    ulong new_image_size = (ulong)width*(ulong)height;
+    ulong new_cube_size = new_image_size*(ulong)depth;
+    uchar* new_mask_data = new uchar[new_cube_size];
+    ulong cubeIdx = 0;
+    for(int z = 0; z < depth; ++z) {
+      for(int y = 0; y < height; ++y) {
+        for(int x = 0; x < width; ++x) {
+          new_mask_data[cubeIdx] = mask_data[z*image_size + y*_width + x];
+          ++cubeIdx;
+        }
+      }
+    }
+    delete[] mask_data;
+    mask_data = new_mask_data;
+  }
+
+  generateSupernodeLabelFromMaskImages(mask_data,
+                                       includeBoundaryLabels,
+                                       useColorImages);
+
+  delete[] mask_data;
+}
+
+void Slice3d::generateSupernodeLabelFromMaskImages(uchar* mask_data,
+                                                   bool includeBoundaryLabels,
+                                                   bool useColorImages)
+{
+  if(supernodeLabelsLoaded) {      
+    printf("[Slice3d] Warning : Supernode labels have already been loaded\n");
+    return;
+  }
+
+  supernodeLabelsLoaded = true;
+
+  supernode* s;
+  int nr_classes = 2;
+  if(includeBoundaryLabels) {
+    nr_classes = 3;
+  }
+
+  // first pass to compute labels
+  if(useColorImages) {
+    for(map<sidType, supernode* >::iterator it = mSupervoxels->begin();
+        it != mSupervoxels->end(); it++) {
+      s = it->second;
+      s->setData(computeSupernodeLabel_advanced(s->id, mask_data),nr_classes);
+    }
+  } else {
+    for(map<sidType, supernode* >::iterator it = mSupervoxels->begin();
+        it != mSupervoxels->end(); it++) {
+      s = it->second;
+      s->setData(computeSupernodeLabel(s->id, mask_data),nr_classes);
+    }
+  }
+
+  int slabel;
+  if(includeBoundaryLabels) {
+    // second pass to change foreground labels to boundary labels if they are
+    // touching background labels
+    for(map<sidType, supernode* >::iterator it = mSupervoxels->begin();
+        it != mSupervoxels->end(); it++) {
+      s = it->second;
+      slabel = s->getLabel();
+      if(slabel == FOREGROUND) {
+        for(vector < supernode* >::iterator itN = s->neighbors.begin();
+            itN != s->neighbors.end();itN++) {
+          supernode* ns = *itN;
+          if(s->id == ns->id) {
+            printf("[Slice3d] Error : supernode %d has a neighbor with the same sid\n", s->id);
+            continue;
+          }
+
+          if(ns->getLabel() == BACKGROUND) {
+            // BACKGROUND label was found among the neighbors
+            // switch label to BOUNDARY
+            s->setLabel(BOUNDARY);
+            break;
+          }
+        }
+      }
+
+      if(s->getLabel() == FOREGROUND) {
+        int countObject = 0;
+        int countBackground = 0;
+        node n;
+        nodeIterator ni = s->getIterator();
+        ni.goToBegin();
+        while(!ni.isAtEnd()) {
+          ni.get(n);
+          ni.next();
+          if(mask_data[n.z*sliceSize+n.y*width+n.x] == BACKGROUND_MASKVALUE) {
+            countBackground++;
+          } else {
+            countObject++;
+          }
+        }
+        //int minCount = minPercentToAssignLabel*ni.size();
+        //if(countObject > minCount && countBackground > minCount) {
+        if(countBackground > 0) {
+          s->setLabel(BOUNDARY);
+        }
+      }
+
+    }
+  }
+}
+
+labelType* Slice3d::getSupernodeLabels()
+{
+  ulong cubeSize = sliceSize*depth;
+  labelType* labelCube = new labelType[cubeSize];
+
+  // Make prediction for every superpixel
+  ulong idx = 0;
+  labelType label;
+  supernode* s;
+  node n;
+  for(map<sidType, supernode* >::iterator it = mSupervoxels->begin();
+      it != mSupervoxels->end(); it++) {
+    s = it->second;
+    label = s->getLabel();
+
+    nodeIterator ni = s->getIterator();
+    ni.goToBegin();
+    while(!ni.isAtEnd()) {
+      ni.get(n);
+      ni.next();
+      idx = ((ulong)n.z*sliceSize) + n.y*width + n.x;
+      //labelCube[idx] = label;
+      labelCube[idx] = (label/2.0)*255; // temporary hack
+    }
+  }
+
+  return labelCube;
+}
+
+void Slice3d::createSupernodeLabels(const uchar* nodeLabels,
+                                    labelType*& labelCube,
+                                    int nClasses)
+{
+  ulong cubeSize = sliceSize*(ulong)depth;
+  labelCube = new labelType[cubeSize];
+  nClasses = max(1,nClasses-1);
+
+  // Create cube containing the labels of each supervoxel.
+  ulong idx = 0;
+  labelType label;
+  supernode* s;
+  node n;
+  for(map<sidType, supernode* >::iterator it = mSupervoxels->begin();
+      it != mSupervoxels->end(); it++) {
+    s = it->second;
+    label = nodeLabels[it->first];
+
+    nodeIterator ni = s->getIterator();
+    ni.goToBegin();
+    while(!ni.isAtEnd())
+      {
+        ni.get(n);
+        ni.next();
+        idx = ((ulong)n.z*sliceSize) + n.y*width + n.x;
+        //labelCube[idx] = label;
+        labelCube[idx] = (label/(float)nClasses)*255;
+      }
+  }
+}
+
+void Slice3d::createOverlayAnnotationImage(const char* filename, int imageId)
+{
+  labelType label;
+  const int nChannels = 3;
+  uchar col[nChannels];
+  col[0] = 255; col[1] = 0; col[2] = 0;
+
+  IplImage* img = cvCreateImage(cvSize(width,height),IPL_DEPTH_8U, nChannels);
+  uchar* pImg;
+  ulong imageSize = width*height;
+  ulong cubeIdx = imageId*imageSize;
+  for(int y=0; y<height; y++) {
+    for(int x=0; x<width; x++) {
+      pImg = &((uchar*)(img->imageData + img->widthStep*y))[x*img->nChannels];
+      label = getSupernodeLabel(getSid(x,y,imageId));
+
+      for(int i=0; i < nChannels; i++) {
+        if(col[i] > 0 && label != T_BACKGROUND)
+          pImg[i] = col[i];
+        else
+          pImg[i] = raw_data[cubeIdx];
+      }
+
+      cubeIdx++;
+    }
+  }
+
+  cvSaveImage(filename, img);
+  cvReleaseImage(&img);
+}
+
+void Slice3d::exportOverlay(const char* filename)
+{
+#ifndef USE_ITK
+  printf("[Slice3d] Warning : you have to set USE_ITK to true to export overlays\n");
+#else
+
+  ulong cubeSize = sliceSize*(ulong)depth;
+  labelType* outputCube = new labelType[cubeSize*3];
+  const int nChannels = 3;
+  uchar col[nChannels];
+  col[0] = 255; col[1] = 0; col[2] = 0;
+  ulong outputCubeIdx = 0;
+  ulong idx = 0;
+  labelType label;
+  supernode* s;
+  node n;
+  for(map<sidType, supernode* >::iterator it = mSupervoxels->begin();
+      it != mSupervoxels->end(); it++) {
+    s = it->second;
+    label = s->getLabel();
+
+    nodeIterator ni = s->getIterator();
+    ni.goToBegin();
+    while(!ni.isAtEnd()) {
+      ni.get(n);
+      ni.next();
+      idx = ((ulong)n.z*sliceSize) + n.y*width + n.x;
+      outputCubeIdx = idx*nChannels;
+      
+      for(int i=0; i < nChannels; i++) {
+        if(col[i] > 0 && label != T_BACKGROUND)
+          outputCube[outputCubeIdx] = col[i];
+        else
+          outputCube[outputCubeIdx] = raw_data[idx];
+        
+        outputCubeIdx++;
+      }
+    }
+  }
+
+  exportColorTIFCube(outputCube, filename,
+                     depth, height, width);
+
+  //const int firstImageToExtract = getDepth()/2;
+  const int firstImageToExtract = 1;
+  const int nImagesToExtract = 3;
+  stringstream soutOverlayImage;
+  soutOverlayImage << getDirectoryFromPath(filename);
+  soutOverlayImage << "/snapshot_" << getNameFromPath(filename);
+  PRINT_MESSAGE("[Slice3d] Exporting %d-th image from cube %s\n",
+                firstImageToExtract, soutOverlayImage.str().c_str());
+  exportImageFromColorCube(soutOverlayImage.str().c_str(),
+                           outputCube,
+                           getWidth(), getHeight(), getDepth(),
+                           firstImageToExtract, nImagesToExtract);
+
+  delete[] outputCube;
+#endif
+}
+
+void Slice3d::exportOverlay(const char* filename, labelType* labels)
+{
+#ifndef USE_ITK
+  printf("[Slice3d] Warning : you have to set USE_ITK to true to export overlays\n");
+#else
+
+  ulong cubeSize = sliceSize*(ulong)depth;
+  labelType* outputCube = new labelType[cubeSize*3];
+  const int nChannels = 3;
+  uchar col[nChannels];
+  col[0] = 255; col[1] = 0; col[2] = 0;
+  ulong outputCubeIdx = 0;
+  ulong idx = 0;
+  labelType label;
+  supe
