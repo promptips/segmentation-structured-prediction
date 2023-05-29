@@ -1966,4 +1966,20 @@ void Slice3d::exportProbabilities(const char* filename, int nClasses,
   supernode* s;
   node n;
 
-  for(uint sid = 0; sid < getNbSuper
+  for(uint sid = 0; sid < getNbSupernodes(); sid++) {
+    s = getSupernode(sid);
+    pb = pbs[sid]*255; 
+
+    nodeIterator ni = s->getIterator();
+    ni.goToBegin();
+    while(!ni.isAtEnd()) {
+      ni.get(n);
+      ni.next();
+      idx = n.z*sliceSize + n.y*width + n.x;
+      labelCube[idx] = pb;
+    }
+  }
+
+  exportCube(labelCube, filename, depth, height, width);
+  delete[] labelCube;
+}
