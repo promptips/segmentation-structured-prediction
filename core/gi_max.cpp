@@ -85,4 +85,68 @@ double GI_max::run(labelType* inferredLabels,
     n[i].index = i+1;
   n[i].index = -1;
 
-  const map<int, supernode* >& _supe
+  const map<int, supernode* >& _supernodes = slice->getSupernodes();
+  for(map<int, supernode* >::const_iterator its = _supernodes.begin();
+      its != _supernodes.end(); its++) {
+    sid = its->first;
+
+    if(param->nClasses != 2) {
+      for(int i = 0; i < (int)param->nClasses; i++) {
+
+        double unaryPotential = computeUnaryPotential(slice, sid, i);
+
+        if(nodeCoeffs) {
+          unaryPotential *= (*nodeCoeffs)[sid];
+        }
+
+        buf[i] = unaryPotential;
+      }
+    } else {
+      buf[T_FOREGROUND] = 0;
+
+      const int i = T_BACKGROUND;
+      double unaryPotential = computeUnaryPotential(slice, sid, i);
+
+      if(nodeCoeffs) {
+        unaryPotential *= (*nodeCoeffs)[sid];
+      }
+
+      buf[i] = unaryPotential;
+    }
+
+    if(useLossFunction) {
+      // loss function
+      for(int s = 0; s < (int)param->nClasses; s++) {
+        if(s != groundTruthLabels[sid]) {
+          // add loss of the ground truth label
+          if(nodeCoeffs) {
+            buf[s] += (*nodeCoeffs)[sid]*lossPerLabel[groundTruthLabels[sid]];
+          } else {
+            buf[s] += lossPerLabel[groundTruthLabels[sid]];
+          }
+        }
+      }
+
+      // loss function : -1 if correct label (same as adding +1 to all incorrect labels)
+      //buf[groundTruthLabels[sid]] = std::exp(std::log(buf[groundTruthLabels[sid]])-1);
+    }
+
+    // pick max
+    bool initialized = false;
+    maxScore = buf[0];
+    inferredLabels[sid] = 0;
+    for(int s = 0; s < (int)param->nClasses; s++) {
+      if(!replaceVoidMSRC || (s != voidLabel && s != moutainLabel && s != horseLabel)) {
+        if(!initialized || maxScore < buf[s]) {
+          maxScore = buf[s];
+          inferredLabels[sid] = s;
+          initialized = true;
+        }
+      }
+    }
+  }
+  
+  delete[] n;
+  delete[] buf;
+  return computeEnergy(inferredLabels);
+}
