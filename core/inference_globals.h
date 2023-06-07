@@ -52,4 +52,34 @@ typedef float edgeCoeffType;
 // macros used to index w vector
 #if USE_LONG_RANGE_EDGES
 #define SVM_FEAT_INDEX0(param) (((param)->nDistances*(param)->nGradientLevels*(param)->nOrientations*(param)->nClasses*(param)->nClasses) + \
-                                (param)->n
+                                (param)->nUnaryWeights + ((param)->nGradientLevels==0 && (param)->includeLocalEdges))
+#else
+#define SVM_FEAT_INDEX0(param) (((param)->nGradientLevels*(param)->nOrientations*(param)->nClasses*(param)->nClasses) + \
+                                (param)->nUnaryWeights + ((param)->nGradientLevels==0 && (param)->includeLocalEdges))
+#endif
+
+#define SVM_FEAT_NUM_CLASSES(param) ((param)->nUnaryWeights)
+#define SVM_FEAT_INDEX(param,c,f) (SVM_FEAT_INDEX0(param) + ((f)*SVM_FEAT_NUM_CLASSES(param))+(c))
+
+#define ORIENTATION_SENSITIVE 1
+
+#define COMPUTE_GLOBAL_LEVELS 1
+
+// HACK for MSRC database in order to remove the global nodes for the last 3 classes
+#define MSRC_NB_CLASSES_TO_REMOVE 3
+
+#define MVC_MAX_ITER 200
+#define INFERENCE_MAX_ITER 100
+
+#define ONE_PARAM_PER_CLASS 0
+
+// Metric
+#define METRIC_SUPERNODE_BASED_01 0
+#define METRIC_NODE_BASED_01 1
+
+#define INFERENCE_VERBOSE 1
+#define INFERENCE_PRINT(format, ...) if(INFERENCE_VERBOSE) printf (format, ## __VA_ARGS__)
+
+//---------------------------------------------------------------------FUNCTIONS
+
+#endif //INFERENCE_GLOBALS_H
