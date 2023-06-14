@@ -129,4 +129,260 @@ void compareMultiLabelVolumes_nodeBased(Slice_P& slice_GT,
                                         bool normalize,
                                         bool useColorAnnotations,
                                         ulong* TP,
-                         
+                                        ulong* TN);
+
+void compareMultiLabelVolumes_givenMask_nodeBased(Slice_P& slice_GT,
+                                                  const labelType* mask,
+                                                  const labelType* labels,
+                                                  const int class_label,
+                                                  float& true_neg,
+                                                  float& true_pos,
+                                                  float& false_neg,
+                                                  float& false_pos,
+                                                  bool normalize,
+                                                  bool useColorAnnotations,
+                                                  ulong* TP,
+                                                  ulong* TN);
+
+bool containsImageExtension(string path);
+
+void copyFile(const char* src_filename, const char* dst_filename);
+
+/**
+ * @param outputData memory is allocated inside the function
+ */
+void cubeFloat2Uchar(float* inputData, uchar*& outputData,
+                     int nx, int ny, int nz);
+
+int drawLabels(Slice* slice, const char* prediction_filename,
+               const char* outputFilename, bool use_prob,
+               eColorMapType colormapType);
+
+int enumerate_files_in_dir(const char* dir,
+                           vector<string> &files,
+                           const char* pattern);
+
+void exportCube(uchar* rawData,
+                const char* filename,
+                int cubeDepth,
+                int cubeHeight,
+                int cubeWidth);
+
+void exportCube(float* rawData,
+                const char* filename,
+                int cubeDepth,
+                int cubeHeight,
+                int cubeWidth);
+
+double getMedian(vector<double>& list_values);
+
+bool getGroundTruthName(string& groundTruthName, const string& maskDir,
+                        const string& filename);
+
+#ifdef USE_ITK
+void importTIFCube(const char* imgFileName,
+                   uchar*& outputData,
+                   sizeSliceType& width,
+                   sizeSliceType& height,
+                   sizeSliceType& depth);
+
+void importTIFCube_noAllocation(const char* imgFileName,
+                                uchar*& outputData,
+                                sizeSliceType& width,
+                                sizeSliceType& height,
+                                sizeSliceType& depth);
+
+void exportTIFCube(uchar* rawData,
+                   const char* filename,
+                   int cubeDepth,
+                   int cubeHeight,
+                   int cubeWidth);
+
+void importCube(const char* imgFileName,
+                uchar*& outputData,
+                int& width,
+                int& height,
+                int& depth);
+
+void importNRRDCube_uint(const char* imgFileName,
+                         uint*& outputData,
+                         int& width,
+                         int& height,
+                         int& depth);
+
+void exportNRRDCube(uchar* rawData,
+                    const char* filename,
+                    int cubeDepth,
+                    int cubeHeight,
+                    int cubeWidth);
+
+void exportNRRDCube(uint* rawData,
+                    const char* filename,
+                    int cubeDepth,
+                    int cubeHeight,
+                    int cubeWidth);
+
+void exportColorTIFCube(uchar* rawData,
+                        const char* filename,
+                        int cubeDepth,
+                        int cubeHeight,
+                        int cubeWidth);
+
+#endif
+
+void exportVIVACube(float* rawData,
+                    const char* filename,
+                    int cubeDepth,
+                    int cubeHeight,
+                    int cubeWidth);
+
+void exportVIVACube(uchar* rawData,
+                    const char* filename,
+                    int cubeDepth,
+                    int cubeHeight,
+                    int cubeWidth);
+
+void exportImageFromCube(const char* output_name, labelType* nodeLabels,
+                         int width, int height, int firstImage, int nImages);
+
+void exportImageFromColorCube(const char* output_name, labelType* nodeLabels,
+                              int width, int height, int depth, int firstImageToExport, int nImagesToExport);
+
+bool isDirectory(const char* path);
+bool isDirectory(string path);
+
+bool fileExists(const char* filename);
+bool fileExists(string filename);
+
+string findLastFile(const string& file_pattern, const string& extension, int* _idx = 0);
+
+string getDirectoryFromPath(string path);
+
+string getLastDirectoryFromPath(string path);
+
+string getNameFromPath(string path);
+
+string getNameFromPathWithoutExtension(string path);
+
+string getNonExistingName(string name);
+
+/**
+ * List files recursively
+ */
+int getFilesInDirRec(const char* dir,
+                     vector<string> &files,
+                     const char* ext = 0);
+
+int getFilesInDir(const char* dir,
+                  vector<string> &files,
+                  const int firstIdx,
+                  const char* ext = 0,
+                  bool includePath = false);
+
+
+int getFilesInDir(const char* dir,
+                  vector<string> &files,
+                  const char* ext = 0,
+                  bool includePath = false);
+
+string getExtension(string path);
+
+void getClassToLabelMap(const char* colormapFilename,
+                        map<ulong, labelType>& classIdxToLabel);
+
+void getLabelToClassMap(const char* colormapFilename,
+                        map<labelType, ulong>& labelToClassIdx);
+
+int loadImagesInDir(const char* dir,
+                    vector<IplImage*>& lImages,
+                    const char* ext = 0,
+                    bool includePath = false);
+
+void save16bitsImage(const char* filename, IplImage* img);
+
+/**
+ * Load a 32 bits image to a binary file
+ * Caller is responsible for freeing memory
+ */
+IplImage* load32bitsImage(const char* filename, CvSize& size);
+
+/**
+ * Save a 32 bits image to a binary file
+ */
+void save32bitsImage(const char* filename, IplImage* img);
+
+/**
+ * Load a double image to a binary file
+ * Caller is responsible for freeing memory
+ */
+IplImage* loadDoubleImage(const char* filename, CvSize& size, int nChannels);
+
+/**
+ * Save a double image to a binary file
+ */
+void saveDoubleImage(const char* filename, IplImage* img);
+
+void saveFloatImage(const char* filename, IplImage* img);
+
+IplImage* loadFloatImage(const char* filename, CvSize& size, int nChannels);
+
+/**
+ * Save an image
+ */
+void saveImage(const char* filename, IplImage* img, const char* ext = ".png");
+
+/**
+ * Convert double image to uchar image
+ * param imgOut memory for output image is allocated by this function
+ */
+void double2ucharImage(IplImage* imgIn, IplImage*& imgOut);
+
+void float2ucharImage(IplImage* imgIn, IplImage*& imgOut);
+
+void splitString(const string& str, vector<string>& tokens);
+
+void splitStringUsing(const string& str, vector<string>& tokens, const char separator);
+
+int sign(int v);
+
+uint time_seed();
+
+void printProcessInfo(struct rusage *p);
+
+void crossProduct(float* a,  float* b, float* c);
+
+float l2Norm(float* a, int n);
+
+void matMulVec_3(float* M, float* v, float* res);
+
+void classIdxToRGB(ulong classIdx, uchar& r, uchar& g, uchar& b);
+
+ulong RGBToclassIdx(uchar r, uchar g, uchar b);
+
+void zipAndDeleteCube(const char* cubeName);
+
+void getFeatureTypes(const int featureId, vector<eFeatureType>& feature_types);
+
+ulong getFeatureTypeId(const vector<eFeatureType>& feature_types);
+
+void set_default_parameters(Config* config);
+
+void getColormapName(string& paramColormap);
+
+void loadData(string imageDir, string maskDir, Config* config, Slice_P*& slice);
+
+void loadDataAndFeatures(string imageDir, string maskDir, Config* config, Slice_P*& slice, Feature*& feature, int* featureSize, int fileIdx = 0);
+
+void loadFromDir(const char* dir, uchar*& raw_data,
+                 int& width, int& height, int* nImgs);
+
+void print_osvm_node(osvm_node *x, const char* title = 0);
+
+void print_osvm_node_nz(osvm_node *x, const char* title = 0);
+
+
+//------------------------------------------------------------TEMPLATE FUNCTIONS
+
+template <typename T>
+void StringCat(string* str, T t) {
+  stringstream sou
