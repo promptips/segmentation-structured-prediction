@@ -952,3 +952,779 @@ double compute_m(STRUCT_LEARN_PARM *sparm,
   }
 
 #if CUSTOM_VERBOSITY > 1
+  // loss computed after updating weight vector
+  ofstream ofs("loss.txt", ios::app);
+  ofs << total_loss << endl;
+  ofs.close();
+
+  // dscore computed after updating weight vector
+  ofstream ofs_dscore("a_dscore.txt", ios::app);
+  ofs_dscore << total_dscore << endl;
+  ofs_dscore.close();
+#endif
+
+  double m = total_dscore + total_loss;
+  return m;
+}
+
+/**
+ * compute an estimate of the score
+ * return max among a subset of sampled superpixels and only compute score for class 0
+ */
+double compute_score_estimate(STRUCT_LEARN_PARM *sparm, STRUCTMODEL *sm, GRADIENT_PARM& gparm, EXAMPLE* example)
+{
+  const int c = 0; // class 0
+  labelType* groundTruthLabels = example->y.nodeLabels;
+  EnergyParam param;
+  sparmToEnergyParam(*sparm, &param);
+  Slice_P* slice = example->x.slice;
+  GraphInference gi(slice, (const EnergyParam*)&param, sm->w+1, example->x.feature, 0, 0);
+
+  double max_potential = 0;
+
+  string config_tmp;
+  double sampling_rate = 0.3;
+  if(Config::Instance()->getParameter("sampling_rate", config_tmp)) {
+    sampling_rate = atof(config_tmp.c_str()); 
+    printf("[svm_struct] sampling_rate = %g\n", sampling_rate);
+  }
+  bool draw_samples = sampling_rate != 1.0;
+  ulong nSupernodes = slice->getNbSupernodes();
+  int sid = 0;
+  for(int i = 0; i < nSupernodes*sampling_rate; ++i) {
+
+    if(draw_samples) {
+      // Select a pixel at random
+      sid = rand() * ((double)nSupernodes/(double)RAND_MAX);
+    } else {
+      sid = i;
+    }
+
+    supernode* s = slice->getSupernode(sid);
+    vector < supernode* >* lNeighbors = &(s->neighbors);
+
+    double potential = gi.computeUnaryPotential(slice, sid, c);
+    for(vector < supernode* >::iterator itN = lNeighbors->begin();
+        itN != lNeighbors->end(); itN++) {
+      const int c2 = rand()*sparm->nClasses / (double)RAND_MAX;
+      double pairwisePotential = gi.computePairwisePotential(slice, s, (*itN),
+                                                             c, c2);
+      potential += pairwisePotential;
+    }
+
+    if(!gparm.ignore_loss) {
+      if(c != groundTruthLabels[sid]) {
+        // add loss of the ground truth label
+        potential += sparm->lossPerLabel[groundTruthLabels[sid]];
+      }
+    }
+
+    if(potential > max_potential) {
+      max_potential = potential;
+    }
+  }
+
+  return max_potential;
+}
+
+void set_sampling_temperature(STRUCT_LEARN_PARM *sparm,
+                              STRUCTMODEL *sm,
+                              GRADIENT_PARM& gparm,
+                              EXAMPLE* ex,
+                              long nExamples,
+                              double* dscores,
+                              double* ddfy)
+{
+
+  int schedulingType = 2;
+  string config_tmp;
+  if(Config::Instance()->getParameter("schedulingType", config_tmp)) {
+    schedulingType = atoi(config_tmp.c_str()); 
+  }
+  printf("[svm_struct_custom] schedulingType=%d\n", schedulingType);
+
+  int nItems = sparm->stepForOutputFiles;
+
+  switch(schedulingType) {
+  case 0:
+    {
+    // try to lower the temperature as much as we can
+
+    double score = compute_score_estimate(sparm, sm, gparm, &ex[0]);
+
+    // compute average dscore
+    double avg_dscore = 0;
+    for(int i = 0; i < nItems; ++i) {
+      avg_dscore += dscores[i];
+    }
+
+#if CUSTOM_VERBOSITY > 2
+    {
+      ofstream ofs_temp("avg_dscore.txt", ios::app);
+      ofs_temp << sparm->iterationId << " " << avg_dscore << endl;
+      ofs_temp.close();
+    }
+#endif
+
+    bool exp_is_inf = false;
+    while(!exp_is_inf) {
+      exp_is_inf = isinf(exp(score/(sparm->sampling_temperature_0/SAMPLING_MUL_COEFF)));
+      if(!exp_is_inf) {
+        // decrease randomness
+        sparm->sampling_temperature_0 /= SAMPLING_MUL_COEFF;
+      }
+    }
+    }
+    break;
+  case 1:
+    {
+    // decrease temperature if dscore < 0
+    // increase temperature if not enough changes
+
+    double score = compute_score_estimate(sparm, sm, gparm, &ex[0]);
+        
+    // compute average dscore
+    double avg_dscore = 0;
+    for(int i = 0; i < nItems; ++i) {
+      avg_dscore += dscores[i];
+    }
+
+#if CUSTOM_VERBOSITY > 2
+    {
+      ofstream ofs_temp("avg_dscore.txt", ios::app);
+      ofs_temp << sparm->iterationId << " " << avg_dscore << endl;
+      ofs_temp.close();
+    }
+#endif
+
+    if(avg_dscore < 0) {
+      bool exp_is_inf = isinf(exp(score/(sparm->sampling_temperature_0/SAMPLING_MUL_COEFF)));
+      if(!exp_is_inf && sparm->sampling_temperature_0 > score*1e-10) {
+        // decrease randomness
+        sparm->sampling_temperature_0 /= SAMPLING_MUL_COEFF;
+
+        // reset labels in the cache to ground-truth
+        for(int i = 0; i < nExamples; i++) {
+          int cacheId = ex[i].x.id;
+          LabelCache::Instance()->setLabel(cacheId, ex[i].y);
+        }
+
+#if CUSTOM_VERBOSITY > 2
+        ofstream ofs_temp("temperature_change.txt", ios::app);
+        ofs_temp << sparm->iterationId << " " << score << " ";
+        ofs_temp << score/sparm->sampling_temperature_0 << " " << exp(score/(sparm->sampling_temperature_0));
+        ofs_temp << " " << sparm->sampling_temperature_0 << endl;
+        ofs_temp.close();
+#endif
+      } else {
+
+        // decrease sampling rate
+        sparm->sampling_rate = max(0.1, sparm->sampling_rate-0.1);
+
+#if CUSTOM_VERBOSITY > 2
+        ofstream ofs_temp("sampling_rate.txt", ios::app);
+        ofs_temp << sparm->sampling_rate << endl;
+        ofs_temp.close();
+#endif
+
+      }
+    }
+
+    }
+    break;
+  case 2:
+    {
+      // decrease temperature
+      if((sparm->iterationId % 20) == 0) {
+      //if((sparm->iterationId % sparm->stepForOutputFiles) == 0) {
+        double score = compute_score_estimate(sparm, sm, gparm, &ex[0]);
+        bool exp_is_inf = isinf(exp(score/(sparm->sampling_temperature_0/SAMPLING_MUL_COEFF)));
+        printf("[svm_learn] Set temp %g %d\n", score, (int)exp_is_inf);
+        if(!exp_is_inf) {
+          // decrease randomness
+          sparm->sampling_temperature_0 /= SAMPLING_MUL_COEFF;
+        }
+      }
+    }
+    break;
+  default:
+    // do not change the temperature
+    break;
+  }
+}
+
+// use -w 9 to call this function
+void svm_learn_struct_joint_custom(SAMPLE sample, STRUCT_LEARN_PARM *sparm,
+				   LEARN_PARM *lparm, KERNEL_PARM *kparm, 
+				   STRUCTMODEL *sm)
+     /* Input: sample (training examples)
+	       sparm (structural learning parameters)
+               lparm (svm learning parameters)
+               kparm (kernel parameters)
+	       Output: sm (learned model) */
+{
+  long        nTotalExamples = sample.n;
+  EXAMPLE     *examples = sample.examples;
+
+  CONSTSET    cset;
+  int         cached_constraint = 0;
+  int         numIt = 0;
+  double      *alpha = NULL;
+  double ceps;
+  bool finalized = false;
+  string config_tmp;
+
+  init_struct_model(sample, sm, sparm, lparm, kparm); 
+
+  Config* config = Config::Instance();
+  GRADIENT_PARM gparm;
+  init_gradient_param(gparm, config, ConstraintSet::Instance());
+  gparm.examples_all = examples;
+  gparm.n_total_examples = nTotalExamples;
+
+  // 0 = initialize parameter vector to 0
+  // 1 = initialize parameter vector using random values
+  int init_type = INIT_WEIGHT_0;
+  if(gparm.ignore_loss == 1) {
+    init_type = INIT_WEIGHT_RANDOM;
+  }
+  if(config->getParameter("sgd_init_type", config_tmp)) {
+    init_type = atoi(config_tmp.c_str());
+  }
+  printf("[SVM_struct_custom] init_type = %d\n", init_type);
+
+  sm->svm_model = 0;
+  //sm->w = new double[sm->sizePsi+1];
+  // use C style to be compatible with svm-light
+  // and to make sure there is no error in free_struct_model
+  sm->w = (double *)my_malloc(sizeof(double)*(sm->sizePsi+1));
+  init_w(sparm, sm, &gparm, examples, init_type);
+
+  if(sparm->giType == T_GI_SAMPLING) {
+    init_sampling(sparm, sm, examples, nTotalExamples);
+  }
+
+  int n_iterations_update_learning_rate = 1000;
+  if(config->getParameter("n_iterations_update_learning_rate", config_tmp)) {
+    n_iterations_update_learning_rate = atoi(config_tmp.c_str());
+  }
+  printf("[SVM_struct_custom] n_iterations_update_learning_rate = %d\n", n_iterations_update_learning_rate);
+
+  if(gparm.ignore_loss) {
+    sparm->lossPerLabel = 0;
+  }
+
+  double* momentum = 0;
+  if( (gparm.update_type == UPDATE_MOMENTUM) || (gparm.update_type == UPDATE_MOMENTUM_DECREASING)) {
+    int _sizePsi = sm->sizePsi + 1;
+    momentum = new double[_sizePsi];
+    for(int i = 0; i < _sizePsi; ++i) {
+      momentum[i] = 0;
+    }
+  }
+
+  double last_obj = 0;
+  int _sizePsi = sm->sizePsi + 1;
+  SWORD* fy_to = new SWORD[_sizePsi];
+  SWORD* fy_away = new SWORD[_sizePsi];
+  double* dfy = new double[_sizePsi];
+  memset((void*)dfy, 0, sizeof(double)*(_sizePsi));
+  LABEL* y_bar = new LABEL[nTotalExamples];
+
+  int nMaxIterations = (sparm->nMaxIterations!=-1)?sparm->nMaxIterations:1e7;
+  int nItems = sparm->stepForOutputFiles;
+  double* learning_rates = new double[nItems];
+  double* norm_ws = new double[nItems];
+  double* ms = new double[nItems];
+  double* objs = new double[nItems];
+  double* dscores = new double[nItems];
+  int idx = 0;
+  int example_id = 0;
+
+  // sampling: keep previous dfy and check how much change
+  // occurs to decide if we should raise the temperature
+  double* dfy_p = 0;
+  double* ddfy = 0;
+  if(sparm->giType == T_GI_SAMPLING) {
+    dfy_p = new double[_sizePsi];
+    memset((void*)dfy_p, 0, sizeof(double)*(_sizePsi));
+    ddfy = new double[nItems];
+  }
+
+  do {
+
+    EXAMPLE* _ex = examples;
+
+    int _nBatchExamples = nTotalExamples;
+
+    if(gparm.n_batch_examples != -1) {
+      _ex += example_id;
+
+      // make sure next batch doesn't go over size of training set
+      if(example_id + gparm.n_batch_examples > nTotalExamples) {
+        _nBatchExamples = nTotalExamples - example_id;
+        printf("[SVM_struct_custom] Batch size for iteration %d is too large. Reducing to %d\n", sparm->iterationId, _nBatchExamples);
+      } else {
+        _nBatchExamples = gparm.n_batch_examples;
+      }
+    }
+
+    double m = do_gradient_step(sparm, sm, _ex, _nBatchExamples,
+                                &gparm, momentum, fy_to, fy_away, dfy,
+                                dscores[idx], y_bar);
+
+    // projection
+    if(gparm.enforce_submodularity) {
+      double* smw = sm->w + 1;
+      enforce_submodularity(sparm, smw);
+    }
+    if(gparm.max_norm_w > 0) {
+      project_w(sm, &gparm);
+    }
+
+    double obj = 0;
+    switch(gparm.loss_type) {
+    case LINEAR_LOSS:
+      obj = m;
+      break;
+    case LOG_LOSS:
+      if(m > 100) {
+        obj = log(1 + std::exp(100.0));
+      } else {
+        obj = log(1 + std::exp(m));
+      }
+      break;
+    case HINGE_LOSS:
+      obj = max(0.0, m);
+      break;
+    case SQUARE_HINGE_LOSS:
+      obj = max(0.0, m*m);
+      break;
+    default:
+      printf("[svm_struct_custom] Unknown loss type %d\n", gparm.loss_type);
+      exit(-1);
+      break;
+    }
+
+    if(numIt == 0) {
+      ceps = fabs(obj);
+    } else {
+      ceps = fabs(last_obj - obj);
+    }
+    last_obj = obj;
+
+    finalized = finalize_iteration(ceps,cached_constraint,sample,sm,cset,alpha,sparm);
+
+    switch(gparm.update_type)
+      {
+      case UPDATE_DECREASING:
+      case UPDATE_MOMENTUM_DECREASING:
+        {
+          if(numIt > n_iterations_update_learning_rate) {
+            gparm.learning_rate = gparm.learning_rate_0/(double)pow(numIt-n_iterations_update_learning_rate,
+                                                                    gparm.learning_rate_exponent);
+          } else {
+            if(numIt > n_iterations_update_learning_rate) {
+              gparm.learning_rate = gparm.learning_rate_0/(double)pow(numIt-n_iterations_update_learning_rate,
+                                                                      gparm.learning_rate_exponent);
+            }
+          }
+        }
+        break;
+      default:
+        break;
+      }
+
+    int _sizePsi = sm->sizePsi + 1;
+    double norm_w = 0;
+    for(int i = 1; i < _sizePsi; ++i) {
+      norm_w += sm->w[i]*sm->w[i];
+    }
+
+    norm_ws[idx] = sqrt(norm_w);
+    ms[idx] = m;
+    objs[idx] = obj;
+    learning_rates[idx] = gparm.learning_rate;
+
+    if(ddfy) {
+      // compute difference between successive dfy vectors
+      ddfy[idx] = 0;
+      for(int i = 0; i < _sizePsi; ++i) {
+        ddfy[idx] += fabs(dfy_p[i] - dfy[i]);
+        dfy_p[i] = dfy[i];
+      }
+    }
+
+    // dump stats
+    if(idx == nItems-1) {
+      idx = 0;
+      write_vector("learning_rate.txt", learning_rates, nItems);
+      write_vector("m.txt", ms, nItems);
+      write_vector("norm_w.txt", norm_ws, nItems);
+      write_vector("obj.txt", objs, nItems);
+
+      if(momentum) {
+        stringstream sout;
+        sout << "step_" << nItems << ".txt";
+        string s_it = sout.str();
+        string momentum_filename = "momentum_" + s_it;
+        write_vector(momentum_filename.c_str(), momentum, _sizePsi);
+      }
+
+    } else {
+      ++idx;
+    }
+
+    // dynamically change temperature for sampling
+    if(sparm->giType == T_GI_SAMPLING) {
+      set_sampling_temperature(sparm, sm, gparm, examples, gparm.n_total_examples, dscores, ddfy);
+    }
+
+    fflush(stdout);
+
+    example_id += gparm.n_batch_examples;
+    if(example_id >= gparm.n_total_examples) {
+      example_id = 0;
+    }
+
+    ++numIt;
+
+  } while( (numIt < nMaxIterations) &&
+           (!finalized)
+	 );
+
+  ConstraintSet::Instance()->save("constraint_set.txt");
+
+  if(numIt >= nMaxIterations) {
+    printf("[svm_struct_custom] Reached max number of iterations %d\n",
+           nMaxIterations);
+  }
+  if (ceps <= sparm->epsilon) {
+    printf("[svm_struct_custom] Reached epsilon value %g/%g\n",
+           ceps, sparm->epsilon);
+  }
+
+  if(momentum) {
+    delete[] momentum;
+    momentum = 0;
+  }
+
+  delete[] fy_to;
+  delete[] fy_away;
+  delete[] dfy;
+  delete[] objs;
+  delete[] ms;
+  delete[] learning_rates;
+  delete[] norm_ws;
+  delete[] dscores;
+
+  for(int s = 0; s < nTotalExamples; ++s) {
+    free_label(y_bar[s]);
+  }
+  delete[] y_bar;
+
+  if(dfy_p) {
+    delete[] dfy_p;
+  }
+  if(ddfy) {
+    delete[] ddfy;
+  }
+}
+
+void init_sampling(STRUCT_LEARN_PARM *sparm, STRUCTMODEL *sm, EXAMPLE* examples, long nExamples)
+{
+  string config_tmp;
+  // set temperature for sampling
+  double norm_wy_to = get_norm_psi_gt(sparm, sm, examples, nExamples);
+
+  sparm->sampling_temperature_0 = norm_wy_to*1e4;
+  printf("[SVM_struct_custom] sampling_temperature_0 = %g\n", sparm->sampling_temperature_0);
+
+  sparm->sampling_rate = 0.3;
+  if(Config::Instance()->getParameter("sampling_rate", config_tmp)) {
+    sparm->sampling_rate = atof(config_tmp.c_str()); 
+  }
+  printf("[SVM_struct_custom] sampling_rate = %g\n", sparm->sampling_rate);
+
+  //sparm->lossScale = norm_wy_to;
+  sparm->lossScale = 1;
+  if(Config::Instance()->getParameter("sgd_loss_scale", config_tmp)) {
+    double lossScale = atof(config_tmp.c_str());
+    if(lossScale > 0) {
+      sparm->lossScale = lossScale;
+    }
+  }
+  printf("[SVM_struct_custom] sparm->lossScale = %g\n", sparm->lossScale);
+
+  for(int c = 0; c < sparm->nClasses; ++c) {
+    sparm->lossPerLabel[c] *= sparm->lossScale;
+  }
+}
+
+void init_w(STRUCT_LEARN_PARM *sparm, STRUCTMODEL *sm, GRADIENT_PARM* gparm, EXAMPLE* examples, int init_type)
+{
+  vector<string> paramFiles;
+  getFilesInDir("parameter_vector0/", paramFiles, "txt", true);
+
+  if(paramFiles.size() > 0) {
+    string initial_parameter_vector = paramFiles[paramFiles.size()-1].c_str();
+    printf("[SVM_struct_custom] Loading parameter file %s\n",
+           initial_parameter_vector.c_str());
+    sm->w[0] = 0;
+    EnergyParam _param(initial_parameter_vector.c_str());
+    for(int i = 1; i < sm->sizePsi+1; ++i) {
+      sm->w[i] = _param.weights[i-1];
+    }
+    rename(initial_parameter_vector.c_str(), "initial_parameter_vector.txt");
+  } else {
+
+    if(init_type == 0) {
+      // easier to debug cause we know exactly what to expect for the first
+      // most violated constraint.
+      printf("[SVM_struct_custom] Initializing weight vector to 0\n");
+      for(int i = 0; i < sm->sizePsi+1; ++i) {
+        sm->w[i] = 0;
+      }
+    } else {
+      printf("[SVM_struct_custom] Initializing weight vector randomly\n");
+      srand(time(NULL));
+      double norm_w = 0;
+      sm->w[0] = 0;
+      for(int i = 1; i < sm->sizePsi+1; ++i) {
+        sm->w[i] = rand() / (double)RAND_MAX;
+        norm_w += sm->w[i];
+      }
+
+      int _sizePsi = sm->sizePsi + 1;
+      // todo ; loop over all examples ?
+      SWORD* fy_to = new SWORD[_sizePsi];
+      computePsi(fy_to, examples[0].x,examples[0].y,sm,sparm);
+      double norm_wy_to = 0;
+      SWORD* wy_to = fy_to;
+      while (wy_to->wnum) {
+        norm_wy_to += wy_to->weight*wy_to->weight;
+        ++wy_to;
+      }
+      delete[] fy_to;
+
+      if(gparm->max_norm_w > 0 && norm_w > 0) {
+        double scale = gparm->max_norm_w/norm_w;
+        printf("[SVM_struct_custom] Rescaling w by %g\n", scale);
+        for(int i = 1; i < sm->sizePsi+1; ++i) {
+          sm->w[i] *= scale;
+        }
+      }
+    }
+
+    stringstream sout;
+    sout << "parameter_vector0";
+    sout << "/iteration_0.txt";
+    save_parameters(sout.str().c_str(), sparm, sm);
+  }
+}
+
+void project_w(STRUCTMODEL *sm, GRADIENT_PARM* gparm)
+{
+  double norm_w = 0;
+  for(int i = 1; i < sm->sizePsi+1; ++i) {
+    norm_w += sm->w[i];
+  }
+
+  if(gparm->max_norm_w > 0 && norm_w > gparm->max_norm_w) {
+    double scale = gparm->max_norm_w/norm_w;
+    printf("[SVM_struct_custom] Rescaling w by %g/%g = %g\n",
+           gparm->max_norm_w, norm_w, scale);
+    for(int i = 1; i < sm->sizePsi+1; ++i) {
+      sm->w[i] *= scale;
+    }
+  }
+}
+
+void enforce_submodularity(STRUCT_LEARN_PARM *sparm, double* smw)
+{
+  double* pw = smw + sparm->nUnaryWeights;
+
+  int nloops = 1;
+  int offset = 0;
+  if(sparm->nClasses > 2) {
+    nloops = 2;
+    offset = 1;
+  }
+
+  // For 2 classes, use graph-cuts if pairwise potential is attractive/submodular.
+  // Let E be the energy and S the score (E=-S)
+  // Recall that potential is submodular if :
+  // E(0,0) + E(1,1) =< E(0,1) + E(1,0)
+  // S(0,0) + S(1,1) >= S(0,1) + S(1,0) or d >= a
+
+  for(int l = 0 ; l < nloops; ++l) {
+
+    double d = 0; // diagonal
+    double a = 0; //anti-diagonal
+    double d2 = 0; // diagonal
+    double a2 = 0; //anti-diagonal
+
+#if USE_LONG_RANGE_EDGES
+    for(int p = 0; submodularEnergy && (p < sparm->nDistances); ++p)
+      {
+        a = 0;
+        d = 0;
+#else
+        {
+#endif
+
+          for(int g = 0; g < sparm->nGradientLevels; ++g) {
+            d += pw[0] + pw[3+offset];
+            a += pw[1] + pw[2+offset];
+            if(a > d) {
+              // compute accumulated terms up to gradient - 1
+              a2 = 0;
+              d2 = 0;
+              double* pw2 = smw + sparm->nUnaryWeights;
+              if(l > 0) {
+                pw2 += 4;
+              }
+              for(int g2 = 0; g2 < g; ++g2) {
+                d2 += pw2[0] + pw2[3+offset];
+                a2 += pw2[1] + pw2[2+offset];
+                pw2 += sparm->nClasses*sparm->nClasses;
+              }
+
+              // make sure that a < d (remember that submodular means that the sum of the terms on the diagonal is higher)
+              pw[1] = (d-a2)/2.0 - 1e-2;
+              pw[2+offset] = pw[1];
+
+              // add last term
+              d2 += pw2[0] + pw2[3+offset];
+              a2 += pw2[1] + pw2[2+offset];
+          
+              a = a2;
+              d = d2;
+            } else {
+              // a <= d
+              // make sure matrix is symmetric
+              pw[1] = (pw[1] + pw[2+offset])/2.0;
+              pw[2+offset] = pw[1];
+            }
+
+            pw += sparm->nClasses*sparm->nClasses;
+          }
+        }
+
+        pw = smw + sparm->nUnaryWeights;
+        pw += 4;
+      }
+}
+
+void init_gradient_param(GRADIENT_PARM& gparm, Config* config,
+                         ConstraintSet* constraint_set)
+{
+  string config_tmp;
+
+  double learning_rate = 1e-9;
+  if(config->getParameter("learning_rate", config_tmp)) {
+    learning_rate = atof(config_tmp.c_str());
+  }
+  printf("[SVM_struct_custom] learning_rate = %g\n", learning_rate);
+
+  eUpdateType sgd_update_type = UPDATE_MOMENTUM_DECREASING;
+  if(config->getParameter("sgd_update_type", config_tmp)) {
+    sgd_update_type = (eUpdateType)atoi(config_tmp.c_str());
+  }
+  printf("[SVM_struct_custom] sgd_update_type = %d\n", (int)sgd_update_type);
+
+  float momentum_weight = 0;
+  if(config->getParameter("sgd_momentum_weight", config_tmp)) {
+    momentum_weight = atof(config_tmp.c_str());
+  }
+  printf("[SVM_struct_custom] momentum_weight = %g\n", momentum_weight);
+  assert(momentum_weight <= 1.0);
+
+  float regularization_weight = 0;
+  if(config->getParameter("sgd_regularization_weight", config_tmp)) {
+    regularization_weight = atof(config_tmp.c_str());
+  }
+  printf("[SVM_struct_custom] regularization_weight = %g\n", regularization_weight);
+
+  double learning_rate_exponent = 0.5;
+  if(config->getParameter("learning_rate_exponent", config_tmp)) {
+    learning_rate_exponent = atof(config_tmp.c_str());
+  }
+  printf("[SVM_struct_custom] learning_rate_exponent = %g\n", learning_rate_exponent);
+
+  bool update_loss_function = false;
+  if(config->getParameter("update_loss_function", config_tmp)) {
+    update_loss_function = config_tmp.c_str()[0] == '1';
+  }
+  printf("[SVM_struct_custom] update_loss_function=%d\n", (int)update_loss_function);
+
+  eLossType sgd_loss_type = HINGE_LOSS;
+  if(config->getParameter("sgd_loss_type", config_tmp)) {
+    sgd_loss_type = (eLossType)atoi(config_tmp.c_str());
+  }
+  printf("[SVM_struct_custom] sgd_loss_type = %d\n", (int)sgd_loss_type);
+  assert(sgd_loss_type != LINEAR_LOSS);
+
+  eGradientType sgd_gradient_type = GRADIENT_GT;
+  if(config->getParameter("sgd_gradient_type", config_tmp)) {
+    sgd_gradient_type = (eGradientType)atoi(config_tmp.c_str());
+  }
+  printf("[SVM_struct_custom] sgd_gradient_type = %d\n", (int)sgd_gradient_type);
+
+  int sgd_n_batch_examples = -1; // use all examples at once
+  if(config->getParameter("sgd_n_batch_examples", config_tmp)) {
+    sgd_n_batch_examples = atoi(config_tmp.c_str());
+  }
+  printf("[SVM_struct_custom] sgd_n_batch_examples = %d\n", sgd_n_batch_examples);
+
+  int max_number_constraints = 10000;
+  bool sgd_use_history = true;
+  if(config->getParameter("cs_max_number_constraints", config_tmp)) {
+    max_number_constraints = atoi(config_tmp.c_str());
+    sgd_use_history = max_number_constraints > 0;
+  }
+  printf("[SVM_struct_custom] sgd_use_history = %d\n", (int)sgd_use_history);
+
+  eSortingType constraint_set_type = CS_DISTANCE;
+  if(config->getParameter("constraint_set_type", config_tmp)) {
+    constraint_set_type = (eSortingType)atoi(config_tmp.c_str());
+  }
+  printf("[SVM_struct_custom] constraint_set_type = %d\n", (int)constraint_set_type);
+  constraint_set->setSortingAlgorithm(constraint_set_type);
+
+  bool sgd_ignore_loss = false;
+  if(config->getParameter("sgd_ignore_loss", config_tmp)) {
+    sgd_ignore_loss = config_tmp.c_str()[0] == '1';
+  }
+  printf("[SVM_struct_custom] sgd_ignore_loss = %d\n", (int)sgd_ignore_loss);
+
+  double max_norm_w = -1;
+  if(Config::Instance()->getParameter("max_norm_w", config_tmp)) {
+    max_norm_w = atof(config_tmp.c_str());
+  }
+  printf("[SVM_struct_custom] max_norm_w = %g\n", max_norm_w);
+
+  bool enforce_submodularity = true;
+  if(Config::Instance()->getParameter("project_w", config_tmp)) {
+    enforce_submodularity = config_tmp.c_str()[0] == '1';
+  }
+  if(Config::Instance()->getParameter("enforce_submodularity", config_tmp)) {
+    enforce_submodularity = config_tmp.c_str()[0] == '1';
+  }
+  printf("[SVM_struct_custom] enforce_submodularity = %d\n", (int)enforce_submodularity);
+
+  gparm.learning_rate = learning_rate;
+  gparm.learning_rate_0 = learning_rate; // initial learning rate
+  gparm.learning_rate_exponent = learning_rate_exponent;
+  gparm.max_norm_w = max_norm_w;
+  gparm.enforce_submodularity = enforce_submodularity;
+  gparm.update_type = sgd_update_type;
+  gparm.loss_type = sgd_loss_type;
+  gparm.momentum_weight = momentum_weight;
+  gparm.regularization_weight = regularization_weight;
+  gparm.gradient_type = sgd_gradient_type;
+  gparm.use_history = sgd_use_history;
+  gparm.constraint_set_type = constraint_set_type;
+  gparm.ignore_loss = sgd_ignore_loss;
+  gparm.n_batch_examples = sgd_n_batch_examples;
+}
