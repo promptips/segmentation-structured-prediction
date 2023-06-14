@@ -385,4 +385,234 @@ void print_osvm_node_nz(osvm_node *x, const char* title = 0);
 
 template <typename T>
 void StringCat(string* str, T t) {
-  stringstream sou
+  stringstream sout;
+  sout << str;
+  sout << t;
+  *str = sout.str();
+}
+
+template <typename T>
+string StringPrintf(const string& str, T t) {
+  stringstream sout;
+  sout << str;
+  sout << t;
+  return sout.str();
+}
+
+template <typename T>
+string VarToString(T t) {
+  stringstream sout;
+  sout << t;
+  return sout.str();
+}
+
+#ifdef USE_ITK
+
+
+template <typename TInputPixelType, typename LabelImageType>
+typename LabelImageType::Pointer getLabelImage(TInputPixelType* inputData,
+                                     long nx, long ny, long nz)
+{
+  const unsigned int Dimension = 3;
+  typedef itk::Image< TInputPixelType, Dimension > InputImageType;
+  //typedef unsigned int TLabelPixelType;
+  //typedef itk::Image< TLabelPixelType, Dimension > LabelImageType;
+
+  typedef itk::ConnectedComponentImageFilter< InputImageType, LabelImageType > CCFilterType;
+  typename CCFilterType::Pointer ccFilter;
+
+  ccFilter = CCFilterType::New();
+
+  // set parameters
+  ccFilter->SetFullyConnected(true);
+  ccFilter->SetBackgroundValue(0);
+
+  // import data to an itk image
+  typedef itk::ImportImageFilter< TInputPixelType, Dimension > ImportFilterType;
+		
+  typename ImportFilterType::Pointer importFilter = ImportFilterType::New();
+		
+  typename ImportFilterType::SizeType size;
+  size[0] = nx;
+  size[1] = ny;
+  size[2] = nz;
+		
+  typename ImportFilterType::IndexType start;
+  start.Fill( 0 );
+		
+  typename ImportFilterType::RegionType region;
+  region.SetIndex( start );
+  region.SetSize(  size  );
+		
+  importFilter->SetRegion( region );	
+  //region.SetSize( size );
+		
+  typename InputImageType::PointType origin;
+  origin.Fill( 0.0 );
+		
+  importFilter->SetOrigin( origin );
+				
+  typename ImportFilterType::SpacingType spacing;
+  spacing.Fill( 1.0 );
+		
+  importFilter->SetSpacing( spacing );
+  importFilter->SetImportPointer(inputData, 0, false);
+
+  // run filter
+  ccFilter->SetInput(importFilter->GetOutput());
+  ccFilter->Update();
+
+  LabelImageType* labelImage = ccFilter->GetOutput();
+  return labelImage;
+}
+
+#if ITK_VERSION_MAJOR < 4
+template <typename TInputPixelType>
+ulong compareConnectedComponents(TInputPixelType* inputData,
+                                 TInputPixelType* annotationData,
+                                 long nx, long ny, long nz,
+                                 ulong* nObjects)
+{
+  const unsigned int Dimension = 3;
+  typedef unsigned int TLabelPixelType;
+  typedef itk::Image< TLabelPixelType, Dimension > LabelImageType;
+
+  LabelImageType::Pointer labelInput = getLabelImage<TInputPixelType,LabelImageType>(inputData,nx,ny,nz);
+  LabelImageType::Pointer labelAnnotation = getLabelImage<TInputPixelType,LabelImageType>(annotationData,nx,ny,nz);
+
+  typedef itk::ShapeLabelObject< long, Dimension >       LabelObjectType;
+  //typedef itk::ShapeLabelObject< TInputPixelType, Dimension >       LabelObjectType;
+  typedef itk::LabelMap< LabelObjectType >             LabelMapType;
+  typedef itk::LabelImageToShapeLabelMapFilter< LabelImageType, LabelMapType > LabelFilterType;
+
+  typename LabelFilterType::Pointer labelFilterInput = LabelFilterType::New();
+  labelFilterInput->SetBackgroundValue(0);
+  labelFilterInput->SetInput(labelInput);
+  labelFilterInput->Update();
+
+  typename LabelFilterType::Pointer labelFilterAnnotation = LabelFilterType::New();
+  labelFilterAnnotation->SetBackgroundValue(0);
+  labelFilterAnnotation->SetInput(labelAnnotation);
+  labelFilterAnnotation->Update();
+
+  //LabelMapType* labelMapInput = labelFilterInput->GetOutput();
+  LabelMapType* labelMapAnnotation = labelFilterAnnotation->GetOutput();
+  ulong nAnnotatedObjects = labelMapAnnotation->GetNumberOfLabelObjects();
+
+  if(nObjects) {
+    *nObjects = nAnnotatedObjects;
+  }
+
+  ulong sliceSize = nx*ny;
+
+  ulong nDetectedObjects = 0;
+  bool objectDetected;
+  ulong cubeIndex;
+  for( unsigned long labelCounter = 0; labelCounter < nAnnotatedObjects; labelCounter++ )
+    {
+      LabelObjectType * labelObject = labelMapAnnotation->GetNthLabelObject(labelCounter);
+
+      objectDetected = false;
+
+      typename LabelObjectType::LineContainerType lc = labelObject->GetLineContainer();
+      typename LabelObjectType::LineContainerType::iterator ilc;
+      for(ilc = lc.begin(); !objectDetected && ilc != lc.end(); ilc++)
+        {
+          typename LabelObjectType::LineType::IndexType idx = ilc->GetIndex();
+          typename LabelObjectType::LineType::LengthType len = ilc->GetLength();
+          for(int i=0;i<(int)len;i++)
+            {
+              cubeIndex = (idx[2]*sliceSize) + (idx[1]*nx) + (idx[0]+i);
+              if(annotationData[cubeIndex])
+                {
+                  objectDetected = true;
+                  nDetectedObjects++;
+                  break;
+                }
+            }
+        }
+    }
+
+  //printf("nDetectedObjects=%ld/%ld\n", nDetectedObjects,nAnnotatedObjects);
+
+  return nDetectedObjects;
+}
+#endif
+
+template <typename TInputPixelType>
+ulong countConnectedComponents(TInputPixelType* inputData,
+                               long nx, long ny, long nz)
+{
+  const unsigned int Dimension = 3;
+  typedef itk::Image< TInputPixelType, Dimension > InputImageType;
+  typedef unsigned int TLabelPixelType;
+  typedef itk::Image< TLabelPixelType, Dimension > LabelImageType;
+
+  typedef itk::ConnectedComponentImageFilter< InputImageType, LabelImageType > CCFilterType;
+  typename CCFilterType::Pointer ccFilter;
+
+  ccFilter = CCFilterType::New();
+
+  // set parameters
+  ccFilter->SetFullyConnected(true);
+  ccFilter->SetBackgroundValue(0);
+
+  // import data to an itk image
+  typedef itk::ImportImageFilter< TInputPixelType, Dimension > ImportFilterType;
+		
+  typename ImportFilterType::Pointer importFilter = ImportFilterType::New();
+		
+  typename ImportFilterType::SizeType size;
+  size[0] = nx;
+  size[1] = ny;
+  size[2] = nz;
+		
+  typename ImportFilterType::IndexType start;
+  start.Fill( 0 );
+		
+  typename ImportFilterType::RegionType region;
+  region.SetIndex( start );
+  region.SetSize(  size  );
+		
+  importFilter->SetRegion( region );	
+  //region.SetSize( size );
+		
+  typename InputImageType::PointType origin;
+  origin.Fill( 0.0 );
+		
+  importFilter->SetOrigin( origin );
+				
+  typename ImportFilterType::SpacingType spacing;
+  spacing.Fill( 1.0 );
+		
+  importFilter->SetSpacing( spacing );
+  importFilter->SetImportPointer(inputData, 0, false);
+
+  // run filter
+  ccFilter->SetInput(importFilter->GetOutput());
+  ccFilter->Update();
+
+  return (ulong) ccFilter->GetObjectCount ();
+
+  /*
+  LabelImageType* labelImage = ccFilter->GetOutput();
+
+  typedef itk::ShapeLabelObject< long, Dimension >       LabelObjectType;
+  //typedef itk::ShapeLabelObject< TInputPixelType, Dimension >       LabelObjectType;
+  typedef itk::LabelMap< LabelObjectType >             LabelMapType;
+  typedef itk::LabelImageToShapeLabelMapFilter< LabelImageType, LabelMapType > LabelFilterType;
+
+  typename LabelFilterType::Pointer labelFilter = LabelFilterType::New();
+  labelFilter->SetBackgroundValue(0);
+  labelFilter->SetInput(labelImage);
+  labelFilter->Update();
+
+  LabelMapType * outputLabelMap = labelFilter->GetOutput();
+  unsigned long numberOfLabelMapObjects = outputLabelMap->GetNumberOfLabelObjects();
+  return numberOfLabelMapObjects;
+*/
+}
+
+#endif // USE_ITK
+
+#endif //UTILS_H
