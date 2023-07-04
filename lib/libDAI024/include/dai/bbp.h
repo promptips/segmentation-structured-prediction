@@ -328,4 +328,100 @@ class BBP {
         /// Returns reference to variable belief adjoint
         Prob& adj_b_V(size_t i) { return _adj_b_V[i]; }
         /// Returns constant reference to variable belief adjoint
-        const Prob& adj_b_V(size_t i) const { return _adj_
+        const Prob& adj_b_V(size_t i) const { return _adj_b_V[i]; }
+        /// Returns reference to factor belief adjoint
+        Prob& adj_b_F(size_t I) { return _adj_b_F[I]; }
+        /// Returns constant reference to factor belief adjoint
+        const Prob& adj_b_F(size_t I) const { return _adj_b_F[I]; }
+        /// Return number of iterations done so far
+        size_t Iterations() { return _iters; }
+    //@}
+
+    public:
+        /// Parameters for BBP
+        /* PROPERTIES(props,BBP) {
+           /// Enumeration of possible update schedules
+           /// The following update schedules are defined:
+           /// - SEQ_FIX fixed sequential updates
+           /// - SEQ_MAX maximum residual updates (inspired by [\ref EMK06])
+           /// - SEQ_BP_REV schedule used by BP, but reversed
+           /// - SEQ_BP_FWD schedule used by BP
+           /// - PAR parallel updates
+           DAI_ENUM(UpdateType,SEQ_FIX,SEQ_MAX,SEQ_BP_REV,SEQ_BP_FWD,PAR);
+
+           /// Verbosity (amount of output sent to stderr)
+           size_t verbose;
+
+           /// Maximum number of iterations
+           size_t maxiter;
+
+           /// Tolerance for convergence test
+           /// \note Not used for updates = SEQ_BP_REV, SEQ_BP_FWD
+           Real tol;
+
+           /// Damping constant (0 for none); damping = 1 - lambda where lambda is the damping constant used in [\ref EaG09]
+           Real damping;
+
+           /// Update schedule
+           UpdateType updates;
+
+           // DISABLED BECAUSE IT IS BUGGY:
+           // bool clean_updates;
+        }
+        */
+/* {{{ GENERATED CODE: DO NOT EDIT. Created by
+    ./scripts/regenerate-properties include/dai/bbp.h src/bbp.cpp
+*/
+        struct Properties {
+            /// Enumeration of possible update schedules
+            /** The following update schedules are defined:
+             *  - SEQ_FIX fixed sequential updates
+             *  - SEQ_MAX maximum residual updates (inspired by [\ref EMK06])
+             *  - SEQ_BP_REV schedule used by BP, but reversed
+             *  - SEQ_BP_FWD schedule used by BP
+             *  - PAR parallel updates
+             */
+            DAI_ENUM(UpdateType,SEQ_FIX,SEQ_MAX,SEQ_BP_REV,SEQ_BP_FWD,PAR);
+            /// Verbosity (amount of output sent to stderr)
+            size_t verbose;
+            /// Maximum number of iterations
+            size_t maxiter;
+            /// Tolerance for convergence test
+            /** \note Not used for updates = SEQ_BP_REV, SEQ_BP_FWD
+             */
+            Real tol;
+            /// Damping constant (0 for none); damping = 1 - lambda where lambda is the damping constant used in [\ref EaG09]
+            Real damping;
+            /// Update schedule
+            UpdateType updates;
+
+            /// Set members from PropertySet
+            /** \throw UNKNOWN_PROPERTY if a Property key is not recognized
+             *  \throw NOT_ALL_PROPERTIES_SPECIFIED if an expected Property is missing
+             */
+            void set(const PropertySet &opts);
+            /// Get members into PropertySet
+            PropertySet get() const;
+            /// Convert to a string which can be parsed as a PropertySet
+            std::string toString() const;
+        } props;
+/* }}} END OF GENERATED CODE */
+};
+
+
+/// Function to verify the validity of adjoints computed by BBP using numerical differentiation.
+/** Factors containing a variable are multiplied by small adjustments to verify accuracy of calculated variable factor adjoints.
+ *  \param bp BP object;
+ *  \param state Global state of all variables;
+ *  \param bbp_props BBP parameters;
+ *  \param cfn Cost function to be used;
+ *  \param h Size of perturbation.
+ *  \relates BBP
+ */
+Real numericBBPTest( const InfAlg &bp, const std::vector<size_t> *state, const PropertySet &bbp_props, const BBPCostFunction &cfn, Real h );
+
+
+} // end of namespace dai
+
+
+#endif
