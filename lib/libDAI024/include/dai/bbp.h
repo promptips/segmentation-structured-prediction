@@ -174,4 +174,158 @@ class BBP {
     //@{
         /// Returns reference to T value; see eqn. (41) in [\ref EaG09]
         Prob & T(size_t i, size_t _I) { return _Tmsg[i][_I]; }
-        /// Returns constant reference to T value; see eqn. (41)
+        /// Returns constant reference to T value; see eqn. (41) in [\ref EaG09]
+        const Prob & T(size_t i, size_t _I) const { return _Tmsg[i][_I]; }
+        /// Returns reference to U value; see eqn. (42) in [\ref EaG09]
+        Prob & U(size_t I, size_t _i) { return _Umsg[I][_i]; }
+        /// Returns constant reference to U value; see eqn. (42) in [\ref EaG09]
+        const Prob & U(size_t I, size_t _i) const { return _Umsg[I][_i]; }
+        /// Returns reference to S value; see eqn. (43) in [\ref EaG09]
+        Prob & S(size_t i, size_t _I, size_t _j) { return _Smsg[i][_I][_j]; }
+        /// Returns constant reference to S value; see eqn. (43) in [\ref EaG09]
+        const Prob & S(size_t i, size_t _I, size_t _j) const { return _Smsg[i][_I][_j]; }
+        /// Returns reference to R value; see eqn. (44) in [\ref EaG09]
+        Prob & R(size_t I, size_t _i, size_t _J) { return _Rmsg[I][_i][_J]; }
+        /// Returns constant reference to R value; see eqn. (44) in [\ref EaG09]
+        const Prob & R(size_t I, size_t _i, size_t _J) const { return _Rmsg[I][_i][_J]; }
+
+        /// Returns reference to variable->factor message adjoint
+        Prob& adj_n(size_t i, size_t _I) { return _adj_n[i][_I]; }
+        /// Returns constant reference to variable->factor message adjoint
+        const Prob& adj_n(size_t i, size_t _I) const { return _adj_n[i][_I]; }
+        /// Returns reference to factor->variable message adjoint
+        Prob& adj_m(size_t i, size_t _I) { return _adj_m[i][_I]; }
+        /// Returns constant reference to factor->variable message adjoint
+        const Prob& adj_m(size_t i, size_t _I) const { return _adj_m[i][_I]; }
+    //@}
+
+    /// \name Parallel algorithm
+    //@{
+        /// Calculates new variable->factor message adjoint
+        /** Increases variable factor adjoint according to eqn. (27) in [\ref EaG09] and
+         *  calculates the new variable->factor message adjoint according to eqn. (29) in [\ref EaG09].
+         */
+        void calcNewN( size_t i, size_t _I );
+        /// Calculates new factor->variable message adjoint
+        /** Increases factor adjoint according to eqn. (28) in [\ref EaG09] and
+         *  calculates the new factor->variable message adjoint according to the r.h.s. of eqn. (30) in [\ref EaG09].
+         */
+        void calcNewM( size_t i, size_t _I );
+        /// Calculates unnormalized variable->factor message adjoint from the normalized one
+        void calcUnnormMsgN( size_t i, size_t _I );
+        /// Calculates unnormalized factor->variable message adjoint from the normalized one
+        void calcUnnormMsgM( size_t i, size_t _I );
+        /// Updates (un)normalized variable->factor message adjoints
+        void upMsgN( size_t i, size_t _I );
+        /// Updates (un)normalized factor->variable message adjoints
+        void upMsgM( size_t i, size_t _I );
+        /// Do one parallel update of all message adjoints
+        void doParUpdate();
+    //@}
+
+    /// \name Sequential algorithm
+    //@{
+        /// Helper function for sendSeqMsgM(): increases factor->variable message adjoint by \a p and calculates the corresponding unnormalized adjoint
+        void incrSeqMsgM( size_t i, size_t _I, const Prob& p );
+        //  DISABLED BECAUSE IT IS BUGGY:
+        //  void updateSeqMsgM( size_t i, size_t _I );
+        /// Sets normalized factor->variable message adjoint and calculates the corresponding unnormalized adjoint
+        void setSeqMsgM( size_t i, size_t _I, const Prob &p );
+        /// Implements routine Send-n in Figure 5 in [\ref EaG09]
+        void sendSeqMsgN( size_t i, size_t _I, const Prob &f );
+        /// Implements routine Send-m in Figure 5 in [\ref EaG09]
+        void sendSeqMsgM( size_t i, size_t _I );
+    //@}
+
+        /// Computes the adjoint of the unnormed probability vector from the normalizer and the adjoint of the normalized probability vector
+        /** \see eqn. (13) in [\ref EaG09]
+         */
+        Prob unnormAdjoint( const Prob &w, Real Z_w, const Prob &adj_w );
+
+        /// Calculates averaged L1 norm of unnormalized message adjoints
+        Real getUnMsgMag();
+        /// Calculates averaged L1 norms of current and new normalized message adjoints
+        void getMsgMags( Real &s, Real &new_s );
+        /// Returns indices and magnitude of the largest normalized factor->variable message adjoint
+        void getArgmaxMsgM( size_t &i, size_t &_I, Real &mag );
+        /// Returns magnitude of the largest (in L1-norm) normalized factor->variable message adjoint
+        Real getMaxMsgM();
+
+        /// Calculates sum of L1 norms of all normalized factor->variable message adjoints
+        Real getTotalMsgM();
+        /// Calculates sum of L1 norms of all updated normalized factor->variable message adjoints
+        Real getTotalNewMsgM();
+        /// Calculates sum of L1 norms of all normalized variable->factor message adjoints
+        Real getTotalMsgN();
+
+        /// Returns a vector of Probs (filled with zeroes) with state spaces corresponding to the factors in the factor graph \a fg
+        std::vector<Prob> getZeroAdjF( const FactorGraph &fg );
+        /// Returns a vector of Probs (filled with zeroes) with state spaces corresponding to the variables in the factor graph \a fg
+        std::vector<Prob> getZeroAdjV( const FactorGraph &fg );
+
+    public:
+    /// \name Constructors/destructors
+    //@{
+        /// Construct BBP object from a InfAlg \a ia and a PropertySet \a opts
+        /** \param ia should be a BP object or something compatible
+         *  \param opts Parameters @see Properties
+         */
+        BBP( const InfAlg *ia, const PropertySet &opts ) : _bp_dual(ia), _fg(&(ia->fg())), _ia(ia) {
+            props.set(opts);
+        }
+    //@}
+
+    /// \name Initialization
+    //@{
+        /// Initializes from given belief adjoints \a adj_b_V, \a adj_b_F and initial factor adjoints \a adj_psi_V, \a adj_psi_F
+        void init( const std::vector<Prob> &adj_b_V, const std::vector<Prob> &adj_b_F, const std::vector<Prob> &adj_psi_V, const std::vector<Prob> &adj_psi_F ) {
+            _adj_b_V = adj_b_V;
+            _adj_b_F = adj_b_F;
+            _init_adj_psi_V = adj_psi_V;
+            _init_adj_psi_F = adj_psi_F;
+            Regenerate();
+        }
+
+        /// Initializes from given belief adjoints \a adj_b_V and \a adj_b_F (setting initial factor adjoints to zero)
+        void init( const std::vector<Prob> &adj_b_V, const std::vector<Prob> &adj_b_F ) {
+            init( adj_b_V, adj_b_F, getZeroAdjV(*_fg), getZeroAdjF(*_fg) );
+        }
+
+        /// Initializes variable belief adjoints \a adj_b_V (and sets factor belief adjoints and initial factor adjoints to zero)
+        void init_V( const std::vector<Prob> &adj_b_V ) {
+            init( adj_b_V, getZeroAdjF(*_fg) );
+        }
+
+        /// Initializes factor belief adjoints \a adj_b_F (and sets variable belief adjoints and initial factor adjoints to zero)
+        void init_F( const std::vector<Prob> &adj_b_F ) {
+            init( getZeroAdjV(*_fg), adj_b_F );
+        }
+
+        /// Initializes with adjoints calculated from cost function \a cfn, and state \a stateP
+        /** Uses the internal pointer to an inference algorithm in combination with the cost function and state for initialization.
+         *  \param cfn Cost function used for initialization;
+         *  \param stateP is a Gibbs state and can be NULL; it will be initialised using a Gibbs run.
+         */
+        void initCostFnAdj( const BBPCostFunction &cfn, const std::vector<size_t> *stateP );
+    //@}
+
+    /// \name BBP Algorithm
+    //@{
+        /// Perform iterative updates until change is less than given tolerance
+        void run();
+    //@}
+
+    /// \name Query results
+    //@{
+        /// Returns reference to variable factor adjoint
+        Prob& adj_psi_V(size_t i) { return _adj_psi_V[i]; }
+        /// Returns constant reference to variable factor adjoint
+        const Prob& adj_psi_V(size_t i) const { return _adj_psi_V[i]; }
+        /// Returns reference to factor adjoint
+        Prob& adj_psi_F(size_t I) { return _adj_psi_F[I]; }
+        /// Returns constant reference to factor adjoint
+        const Prob& adj_psi_F(size_t I) const { return _adj_psi_F[I]; }
+        /// Returns reference to variable belief adjoint
+        Prob& adj_b_V(size_t i) { return _adj_b_V[i]; }
+        /// Returns constant reference to variable belief adjoint
+        const Prob& adj_b_V(size_t i) const { return _adj_
