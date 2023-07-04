@@ -103,4 +103,35 @@ class BP_dual {
         const FactorGraph& fg() const { return _ia->fg(); }
 
         /// Returns reference to factor->variable message (\a I -> \a i)
-        Prob & 
+        Prob & msgM( size_t i, size_t _I ) { return _msgs.m[i][_I]; }
+        /// Returns constant reference to factor->variable message (\a I -> \a i)
+        const Prob & msgM( size_t i, size_t _I ) const { return _msgs.m[i][_I]; }
+        /// Returns reference to variable -> factor message (\a i -> \a I)
+        Prob & msgN( size_t i, size_t _I ) { return _msgs.n[i][_I]; }
+        /// Returns constant reference to variable -> factor message (\a i -> \a I)
+        const Prob & msgN( size_t i, size_t _I ) const { return _msgs.n[i][_I]; }
+        /// Returns reference to normalizer for factor->variable message (\a I -> \a i)
+        Real & zM( size_t i, size_t _I ) { return _msgs.Zm[i][_I]; }
+        /// Returns constant reference to normalizer for factor->variable message (\a I -> \a i)
+        const Real & zM( size_t i, size_t _I ) const { return _msgs.Zm[i][_I]; }
+        /// Returns reference to normalizer for variable -> factor message (\a i -> \a I)
+        Real & zN( size_t i, size_t _I ) { return _msgs.Zn[i][_I]; }
+        /// Returns constant reference to normalizer for variable -> factor message (\a i -> \a I)
+        const Real & zN( size_t i, size_t _I ) const { return _msgs.Zn[i][_I]; }
+
+        /// Returns belief of variable \a i
+        Factor beliefV( size_t i ) const { return Factor( _ia->fg().var(i), _beliefs.b1[i] ); }
+        /// Returns belief of factor \a I
+        Factor beliefF( size_t I ) const { return Factor( _ia->fg().factor(I).vars(), _beliefs.b2[I] ); }
+
+        /// Returns normalizer for belief of variable \a i
+        Real beliefVZ( size_t i ) const { return _beliefs.Zb1[i]; }
+        /// Returns normalizer for belief of factor \a I
+        Real beliefFZ( size_t I ) const { return _beliefs.Zb2[I]; }
+};
+
+
+} // end of namespace dai
+
+
+#endif
