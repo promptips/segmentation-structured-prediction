@@ -217,4 +217,48 @@ class DAIAlg : public InfAlg, public GRM {
         /// Make a backup copy of factor \a I
         void backupFactor( size_t I ) { GRM::backupFactor( I ); }
         /// Make backup copies of all factors involving the variables in \a vs
-        void backupFactors( const VarSet &vs ) { GRM::backu
+        void backupFactors( const VarSet &vs ) { GRM::backupFactors( vs ); }
+
+        /// Restore factor \a I from its backup copy
+        void restoreFactor( size_t I ) { GRM::restoreFactor( I ); }
+        /// Restore the factors involving the variables in \a vs from their backup copies
+        void restoreFactors( const VarSet &vs ) { GRM::restoreFactors( vs ); }
+    //@}
+};
+
+
+/// Base class for inference algorithms that operate on a FactorGraph
+typedef DAIAlg<FactorGraph> DAIAlgFG;
+
+/// Base class for inference algorithms that operate on a RegionGraph
+typedef DAIAlg<RegionGraph> DAIAlgRG;
+
+
+/// Calculates the marginal probability distribution for \a vs using inference algorithm \a obj.
+/** calcMarginal() works by clamping all variables in \a vs and calculating the partition sum for each clamped state.
+ *  Therefore, it can be used in combination with any inference algorithm that can calculate/approximate partition sums.
+ *  \param obj instance of inference algorithm to be used 
+ *  \param vs variables for which the marginal should be calculated
+ *  \param reInit should be set to \c true if at least one of the possible clamped states would be invalid (leading to a factor graph with zero partition sum).
+ */
+Factor calcMarginal( const InfAlg& obj, const VarSet& vs, bool reInit );
+
+/// Calculates beliefs for all pairs of variables in \a vs using inference algorithm \a obj.
+/** calcPairBeliefs() works by 
+ *  - clamping single variables in \a vs and calculating the partition sum and the single variable beliefs for each clamped state, if \a accurate == \c false;
+ *  - clamping pairs of variables in \a vs and calculating the partition sum for each clamped state, if \a accurate == \c true.
+ *
+ *  Therefore, it can be used in combination with any inference algorithm that can calculate/approximate partition sums (and single variable beliefs, if
+ *  \a accurate == \c true).
+ *  \param obj instance of inference algorithm to be used 
+ *  \param vs variables for which the pair beliefs should be calculated
+ *  \param reInit should be set to \c true if at least one of the possible clamped states would be invalid (leading to a factor graph with zero partition sum).
+ *  \param accurate if \c true, uses a slower but more accurate approximation algorithm
+ */
+std::vector<Factor> calcPairBeliefs( const InfAlg& obj, const VarSet& vs, bool reInit, bool accurate=false );
+
+
+} // end of namespace dai
+
+
+#endif
