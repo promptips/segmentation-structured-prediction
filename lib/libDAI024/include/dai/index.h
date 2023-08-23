@@ -310,4 +310,147 @@ class multifor {
  *
  *  \see dai::calcLinearState(), dai::calcState()
  *
- *  \idea Make the State class a more
+ *  \idea Make the State class a more prominent part of libDAI 
+ *  (and document it clearly, explaining the concept of state); 
+ *  add more optimized variants of the State class like IndexFor 
+ *  (e.g. for TFactor<>::slice()).
+ */
+class State {
+    private:
+        /// Type for representing a joint state of some variables as a map, which maps each variable to its state
+        typedef std::map<Var, size_t> states_type;
+
+        /// Current state (represented linearly)
+        long                          state;
+
+        /// Current state (represented as a map)
+        states_type                   states;
+
+    public:
+        /// Default constructor
+        State() : state(0), states() {}
+
+        /// Construct from VarSet \a vs and corresponding linear state \a linearState
+        State( const VarSet &vs, size_t linearState=0 ) : state(linearState), states() {
+            if( linearState == 0 )
+                for( VarSet::const_iterator v = vs.begin(); v != vs.end(); v++ )
+                    states[*v] = 0;
+            else {
+                for( VarSet::const_iterator v = vs.begin(); v != vs.end(); v++ ) {
+                    states[*v] = linearState % v->states();
+                    linearState /= v->states();
+                }
+                DAI_ASSERT( linearState == 0 );
+            }
+        }
+
+        /// Construct from a std::map<Var, size_t>
+        State( const std::map<Var, size_t> &s ) : state(0), states() {
+            insert( s.begin(), s.end() );
+        }
+
+        /// Constant iterator over the values
+        typedef states_type::const_iterator const_iterator;
+
+        /// Returns constant iterator that points to the first item
+        const_iterator begin() const { return states.begin(); }
+
+        /// Returns constant iterator that points beyond the last item
+        const_iterator end() const { return states.end(); }
+
+        /// Return current linear state
+        operator size_t() const {
+            DAI_ASSERT( valid() );
+            return( state );
+        }
+
+        /// Inserts a range of variable-state pairs, changing the current state
+        template<typename InputIterator>
+        void insert( InputIterator b, InputIterator e ) {
+            states.insert( b, e );
+            VarSet vars;
+            for( const_iterator it = begin(); it != end(); it++ )
+                vars |= it->first;
+            state = 0;
+            state = this->operator()( vars );
+        }
+
+        /// Return current state represented as a map
+        const std::map<Var,size_t>& get() const { return states; }
+
+        /// Cast into std::map<Var, size_t>
+        operator const std::map<Var,size_t>& () const { return states; }
+
+        /// Return current state of variable \a v, or 0 if \a v is not in \c *this
+        size_t operator() ( const Var &v ) const {
+            DAI_ASSERT( valid() );
+            states_type::const_iterator entry = states.find( v );
+            if( entry == states.end() )
+                return 0;
+            else
+                return entry->second;
+        }
+
+        /// Return linear state of variables in \a vs, assuming that variables that are not in \c *this are in state 0
+        size_t operator() ( const VarSet &vs ) const {
+            DAI_ASSERT( valid() );
+            size_t vs_state = 0;
+            size_t prod = 1;
+            for( VarSet::const_iterator v = vs.begin(); v != vs.end(); v++ ) {
+                states_type::const_iterator entry = states.find( *v );
+                if( entry != states.end() )
+                    vs_state += entry->second * prod;
+                prod *= v->states();
+            }
+            return vs_state;
+        }
+
+        /// Increments the current state (prefix)
+        void operator++( ) {
+            if( valid() ) {
+                state++;
+                states_type::iterator entry = states.begin();
+                while( entry != states.end() ) {
+                    if( ++(entry->second) < entry->first.states() )
+                        break;
+                    entry->second = 0;
+                    entry++;
+                }
+                if( entry == states.end() )
+                    state = -1;
+            }
+        }
+
+        /// Increments the current state (postfix)
+        void operator++( int ) {
+            operator++();
+        }
+
+        /// Returns \c true if the current state is valid
+        bool valid() const {
+            return( state >= 0 );
+        }
+
+        /// Resets the current state (to the joint state represented by linear state 0)
+        void reset() {
+            state = 0;
+            for( states_type::iterator s = states.begin(); s != states.end(); s++ )
+                s->second = 0;
+        }
+};
+
+
+} // end of namespace dai
+
+
+/** \example example_permute.cpp
+ *  This example shows how to use the Permute, multifor and State classes.
+ *
+ *  \section Output
+ *  \verbinclude examples/example_permute.out
+ *
+ *  \section Source
+ */
+
+
+#endif
