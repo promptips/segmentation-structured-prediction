@@ -118,3 +118,93 @@ class TreeEP : public JTree {
                         _b          = x._b;
                         _I          = x._I;
                         _ns         = x._ns;
+                        _nsrem      = x._nsrem;
+                        _logZ       = x._logZ;
+                    }
+                    return *this;
+                }
+
+                /// Construct from \a subRTree, which is a subtree of the main tree \a jt_RTree, with distribution represented by \a jt_Qa and \a jt_Qb, for off-tree factor \a I
+                TreeEPSubTree( const RootedTree &subRTree, const RootedTree &jt_RTree, const std::vector<Factor> &jt_Qa, const std::vector<Factor> &jt_Qb, const Factor *I );
+            //@}
+
+                /// Initializes beliefs of this subtree
+                void init();
+
+                /// Inverts this approximation and multiplies it by the (super) junction tree marginals \a Qa and \a Qb
+                void InvertAndMultiply( const std::vector<Factor> &Qa, const std::vector<Factor> &Qb );
+
+                /// Runs junction tree algorithm (including off-tree factor I) storing the results in the (super) junction tree \a Qa and \a Qb
+                void HUGIN_with_I( std::vector<Factor> &Qa, std::vector<Factor> &Qb );
+
+                /// Returns energy (?) of this subtree
+                Real logZ( const std::vector<Factor> &Qa, const std::vector<Factor> &Qb ) const;
+
+                /// Returns constant reference to the pointer to the off-tree factor
+                const Factor *& I() { return _I; }
+        };
+
+        /// Stores a TreeEPSubTree object for each off-tree factor
+        std::map<size_t, TreeEPSubTree>  _Q;
+
+    public:
+        /// Default constructor
+        TreeEP() : JTree(), _maxdiff(0.0), _iters(0), props(), _Q() {}
+
+        /// Copy constructor
+        TreeEP( const TreeEP &x ) : JTree(x), _maxdiff(x._maxdiff), _iters(x._iters), props(x.props), _Q(x._Q) {
+            for( size_t I = 0; I < nrFactors(); I++ )
+                if( offtree( I ) )
+                    _Q[I].I() = &factor(I);
+        }
+
+        /// Assignment operator
+        TreeEP& operator=( const TreeEP &x ) {
+            if( this != &x ) {
+                JTree::operator=( x );
+                _maxdiff = x._maxdiff;
+                _iters   = x._iters;
+                props    = x.props;
+                _Q       = x._Q;
+                for( size_t I = 0; I < nrFactors(); I++ )
+                    if( offtree( I ) )
+                        _Q[I].I() = &factor(I);
+            }
+            return *this;
+        }
+
+        /// Construct from FactorGraph \a fg and PropertySet \a opts
+        /** \param opts Parameters @see Properties
+         *  \note The factor graph has to be connected.
+         *  \throw FACTORGRAPH_NOT_CONNECTED if \a fg is not connected
+         */
+        TreeEP( const FactorGraph &fg, const PropertySet &opts );
+
+
+    /// \name General InfAlg interface
+    //@{
+        virtual TreeEP* clone() const { return new TreeEP(*this); }
+        virtual std::string identify() const;
+        virtual Real logZ() const;
+        virtual void init();
+        virtual void init( const VarSet &/*ns*/ ) { init(); }
+        virtual Real run();
+        virtual Real maxDiff() const { return _maxdiff; }
+        virtual size_t Iterations() const { return _iters; }
+        virtual void setProperties( const PropertySet &opts );
+        virtual PropertySet getProperties() const;
+        virtual std::string printProperties() const;
+    //@}
+
+    private:
+        /// Helper function for constructors
+        void construct( const RootedTree &tree );
+        /// Returns \c true if factor \a I is not part of the tree
+        bool offtree( size_t I ) const { return (fac2OR[I] == -1U); }
+};
+
+
+} // end of namespace dai
+
+
+#endif
