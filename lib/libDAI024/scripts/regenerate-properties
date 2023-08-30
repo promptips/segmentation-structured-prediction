@@ -236,4 +236,114 @@ EOF
         DAI_THROWE(NOT_ALL_PROPERTIES_SPECIFIED,errormsg);
 EOF
   for my $v (@vars) {
-    my ($type
+    my ($type,$name,$default,$cmt) = @$v;
+    if(defined $default) {
+      $stext .= <<EOF;
+    if( opts.hasKey("$name") ) {
+        $name = opts.getStringAs<$type>("$name");
+    } else {
+        $name = $default;
+    }
+EOF
+    } else {
+      $stext .= <<EOF;
+    $name = opts.getStringAs<$type>("$name");
+EOF
+    }
+  }
+
+  $stext .= <<EOF;
+}
+PropertySet ${class}::Properties::get() const {
+    PropertySet opts;
+EOF
+
+  for my $v (@vars) {
+    my ($type,$name,$default,$cmt) = @$v;
+#     $text .= qq{opts.set("$name", $name);};
+    $stext .= <<EOF;
+    opts.Set("$name", $name);
+EOF
+
+  }
+  $stext .= <<EOF;
+    return opts;
+}
+string ${class}::Properties::toString() const {
+    stringstream s(stringstream::out);
+    s << "[";
+EOF
+
+  my ($i)=0;
+  for my $v (@vars) {
+    my ($type,$name,$default,$cmt) = @$v;
+    $i++;
+    my $c = ($i<@vars)?" << \",\"":"";
+      $stext .= <<EOF;
+    s << "$name=" << $name$c;
+EOF
+  }
+
+  $stext .= <<EOF;
+    s << "]";
+    return s.str();
+}
+} // end of namespace dai
+EOF
+  return ($gen_code_start.$text.$gen_code_end, $gen_code_start.$stext.$gen_code_end);
+}
+
+# ----------------------------------------------------------------
+# Main loop
+
+$source_buffer = process_file { return 0; } $source_file;
+$source_buffer =~ s/\n+$//s;
+
+$header_buffer = process_file {
+  if (/$props_start_pat/) {
+    # when we see something resembling properties, record it, and when we
+    # get to the end, process and emit the generated code
+    my $start_line = $.;
+    my $props_text = $_;
+    while (<IN>) {
+      last if(m(\*/));
+      $props_text .= $_;
+    }
+    $buffer .= $props_text;
+    $buffer .= $_;
+    my ($htext, $stext) = process_properties($header_file, $start_line, $props_text);
+    $buffer .= $htext;
+    $source_buffer .= "\n\n\n".$stext;
+    return 1;
+  }
+  return 0;
+} $header_file;
+
+# Write new contents of files to temporary locations
+my $header_tmp = "$header_file.new";
+my $source_tmp = "$source_file.new";
+writefile ($header_buffer, $header_tmp);
+writefile ($source_buffer, $source_tmp);
+
+# Get a diff of changes, show it to the user, and ask for confirmation
+my ($diff);
+$diff = getdiff ($header_file, $header_tmp);
+$diff .= getdiff ($source_file, $source_tmp);
+
+if($diff eq '') {
+  warn "No differences\n";
+} else {
+  my $pager = $ENV{PAGER} || "less";
+  open PAGER, "|$pager";
+  print PAGER $diff;
+  close PAGER;
+
+  print STDERR "Replace old with new version? (y|N) ";
+  $_=<>;
+  if (/^y/i) {
+    myrename($header_tmp, $header_file);
+    myrename($source_tmp, $source_file);
+  } else {
+    warn "Aborted\n";
+  }
+}
