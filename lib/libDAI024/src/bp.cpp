@@ -369,4 +369,268 @@ Real BP::run() {
         }
         for( size_t I = 0; I < nrFactors(); ++I ) {
             Factor b( beliefF(I) );
-            
+            maxDiff = std::max( maxDiff, dist( b, oldBeliefsF[I], Prob::DISTLINF ) );
+            oldBeliefsF[I] = b;
+        }
+
+        if( props.verbose >= 3 )
+            cerr << Name << "::run:  maxdiff " << maxDiff << " after " << _iters+1 << " passes" << endl;
+    }
+
+    if( maxDiff > _maxdiff )
+        _maxdiff = maxDiff;
+
+    if( props.verbose >= 1 ) {
+        if( maxDiff > props.tol ) {
+            if( props.verbose == 1 )
+                cerr << endl;
+                cerr << Name << "::run:  WARNING: not converged within " << props.maxiter << " passes (" << toc() - tic << " seconds)...final maxdiff:" << maxDiff << endl;
+        } else {
+            if( props.verbose >= 3 )
+                cerr << Name << "::run:  ";
+                cerr << "converged in " << _iters << " passes (" << toc() - tic << " seconds)." << endl;
+        }
+    }
+
+    return maxDiff;
+}
+
+
+void BP::calcBeliefV( size_t i, Prob &p ) const {
+    p = Prob( var(i).states(), props.logdomain ? 0.0 : 1.0 );
+    int iter = 0;
+    daiforeach( const Neighbor &I, nbV(i) )
+      {
+        if( props.logdomain )
+          p += newMessage( i, I.iter );
+        else
+          p *= newMessage( i, I.iter );
+
+        if(iter == N_ITERATIONS_BEFORE_NORMALIZING)
+          {
+            // normalize so that max or sum == 1 (don't want to do this too frequently or it slows things down)
+#if DEBUG2531
+            printf("[bp.cpp ]More than %d neighbors...Renormalizing\n", N_ITERATIONS_BEFORE_NORMALIZING);
+#endif
+            p.normalize();
+            iter = 0;
+          }
+        iter++;
+      }
+}
+
+
+Factor BP::beliefV( size_t i ) const {
+    Prob p;
+    calcBeliefV( i, p );
+
+    if(p.sum() == 0)
+      {
+        cout << "SUM IS ZERO !!!\n";
+        cout << "Var i " << i << endl;
+        cout << "p" << p << endl;
+      }
+
+    if( props.logdomain ) {
+        p -= p.max();
+        p.takeExp();
+    }
+    p.normalize();
+
+    return( Factor( var(i), p ) );
+}
+
+
+Factor BP::beliefF( size_t I ) const {
+
+#if DEBUG2531
+    if(I==2531)
+      cout << "BP::beliefF 2531\n";
+#endif
+
+    Prob p;
+    calcBeliefF( I, p );
+
+    if(p.sum() == 0)
+      {
+        cout << "SUM IS ZERO !!!\n";
+        cout << "Factor I " << I << endl;
+        cout << "p" << p << endl;
+      }
+
+    if( props.logdomain ) {
+        p -= p.max();
+        p.takeExp();
+    }
+    p.normalize();
+
+    return( Factor( factor(I).vars(), p ) );
+}
+
+
+vector<Factor> BP::beliefs() const {
+    vector<Factor> result;
+    for( size_t i = 0; i < nrVars(); ++i )
+        result.push_back( beliefV(i) );
+    for( size_t I = 0; I < nrFactors(); ++I )
+        result.push_back( beliefF(I) );
+    return result;
+}
+
+
+Factor BP::belief( const VarSet &ns ) const {
+    if( ns.size() == 0 )
+        return Factor();
+    else if( ns.size() == 1 )
+        return beliefV( findVar( *(ns.begin() ) ) );
+    else {
+        size_t I;
+        for( I = 0; I < nrFactors(); I++ )
+            if( factor(I).vars() >> ns )
+                break;
+        if( I == nrFactors() )
+            DAI_THROW(BELIEF_NOT_AVAILABLE);
+        return beliefF(I).marginal(ns);
+    }
+}
+
+
+Real BP::logZ() const {
+    Real sum = 0.0;
+    for( size_t i = 0; i < nrVars(); ++i )
+        sum += (1.0 - nbV(i).size()) * beliefV(i).entropy();
+    for( size_t I = 0; I < nrFactors(); ++I )
+        sum -= dist( beliefF(I), factor(I), Prob::DISTKL );
+    return sum;
+}
+
+
+string BP::identify() const {
+    return string(Name) + printProperties();
+}
+
+
+void BP::init( const VarSet &ns ) {
+    for( VarSet::const_iterator n = ns.begin(); n != ns.end(); ++n ) {
+        size_t ni = findVar( *n );
+        daiforeach( const Neighbor &I, nbV( ni ) ) {
+            Real val = props.logdomain ? 0.0 : 1.0;
+            message( ni, I.iter ).fill( val );
+            newMessage( ni, I.iter ).fill( val );
+            if( props.updates == Properties::UpdateType::SEQMAX )
+                updateResidual( ni, I.iter, 0.0 );
+        }
+    }
+}
+
+
+void BP::updateMessage( size_t i, size_t _I ) {
+    if( recordSentMessages )
+        _sentMessages.push_back(make_pair(i,_I));
+    if( props.damping == 0.0 ) {
+        message(i,_I) = newMessage(i,_I);
+        if( props.updates == Properties::UpdateType::SEQMAX )
+            updateResidual( i, _I, 0.0 );
+    } else {
+        if( props.logdomain )
+            message(i,_I) = (message(i,_I) * props.damping) + (newMessage(i,_I) * (1.0 - props.damping));
+        else
+            message(i,_I) = (message(i,_I) ^ props.damping) * (newMessage(i,_I) ^ (1.0 - props.damping));
+        if( props.updates == Properties::UpdateType::SEQMAX )
+            updateResidual( i, _I, dist( newMessage(i,_I), message(i,_I), Prob::DISTLINF ) );
+    }
+}
+
+
+void BP::updateResidual( size_t i, size_t _I, Real r ) {
+    EdgeProp* pEdge = &_edges[i][_I];
+    pEdge->residual = r;
+
+    // rearrange look-up table (delete and reinsert new key)
+    _lut.erase( _edge2lut[i][_I] );
+    _edge2lut[i][_I] = _lut.insert( make_pair( r, make_pair(i, _I) ) );
+}
+
+
+std::vector<size_t> BP::findMaximum() const {
+    vector<size_t> maximum( nrVars() );
+    vector<bool> visitedVars( nrVars(), false );
+    vector<bool> visitedFactors( nrFactors(), false );
+    stack<size_t> scheduledFactors;
+    for( size_t i = 0; i < nrVars(); ++i ) {
+        if( visitedVars[i] )
+            continue;
+        visitedVars[i] = true;
+
+        // Maximise with respect to variable i
+        Prob prod;
+        calcBeliefV( i, prod );
+        maximum[i] = prod.argmax().first;
+
+        daiforeach( const Neighbor &I, nbV(i) )
+            if( !visitedFactors[I] )
+                scheduledFactors.push(I);
+
+        while( !scheduledFactors.empty() ){
+            size_t I = scheduledFactors.top();
+            scheduledFactors.pop();
+            if( visitedFactors[I] )
+                continue;
+            visitedFactors[I] = true;
+
+            // Evaluate if some neighboring variables still need to be fixed; if not, we're done
+            bool allDetermined = true;
+            daiforeach( const Neighbor &j, nbF(I) )
+                if( !visitedVars[j.node] ) {
+                    allDetermined = false;
+                    break;
+                }
+            if( allDetermined )
+                continue;
+
+            // Calculate product of incoming messages on factor I
+            Prob prod2;
+            calcBeliefF( I, prod2 );
+
+            // The allowed configuration is restrained according to the variables assigned so far:
+            // pick the argmax amongst the allowed states
+            Real maxProb = numeric_limits<Real>::min();
+            State maxState( factor(I).vars() );
+            for( State s( factor(I).vars() ); s.valid(); ++s ){
+                // First, calculate whether this state is consistent with variables that
+                // have been assigned already
+                bool allowedState = true;
+                daiforeach( const Neighbor &j, nbF(I) )
+                    if( visitedVars[j.node] && maximum[j.node] != s(var(j.node)) ) {
+                        allowedState = false;
+                        break;
+                    }
+                // If it is consistent, check if its probability is larger than what we have seen so far
+                if( allowedState && prod2[s] > maxProb ) {
+                    maxState = s;
+                    maxProb = prod2[s];
+                }
+            }
+
+            // Decode the argmax
+            daiforeach( const Neighbor &j, nbF(I) ) {
+                if( visitedVars[j.node] ) {
+                    // We have already visited j earlier - hopefully our state is consistent
+                    if( maximum[j.node] != maxState(var(j.node)) && props.verbose >= 1 )
+                        cerr << "BP::findMaximum - warning: maximum not consistent due to loops." << endl;
+                } else {
+                    // We found a consistent state for variable j
+                    visitedVars[j.node] = true;
+                    maximum[j.node] = maxState( var(j.node) );
+                    daiforeach( const Neighbor &J, nbV(j) )
+                        if( !visitedFactors[J] )
+                            scheduledFactors.push(J);
+                }
+            }
+        }
+    }
+    return maximum;
+}
+
+
+} // end of namespace dai
