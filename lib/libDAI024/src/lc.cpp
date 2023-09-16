@@ -311,3 +311,28 @@ Real LC::run() {
             maxDiff = std::max( maxDiff, dist( beliefV(i), oldBeliefsV[i], Prob::DISTLINF ) );
             oldBeliefsV[i] = beliefV(i);
         }
+
+        if( props.verbose >= 3 )
+            cerr << Name << "::run:  maxdiff " << maxDiff << " after " << _iters+1 << " passes" << endl;
+    }
+
+    if( maxDiff > _maxdiff )
+        _maxdiff = maxDiff;
+
+    if( props.verbose >= 1 ) {
+        if( maxDiff > props.tol ) {
+            if( props.verbose == 1 )
+                cerr << endl;
+                cerr << Name << "::run:  WARNING: not converged within " << props.maxiter << " passes (" << toc() - tic << " seconds)...final maxdiff:" << maxDiff << endl;
+        } else {
+            if( props.verbose >= 2 )
+                cerr << Name << "::run:  ";
+                cerr << "converged in " << _iters << " passes (" << toc() - tic << " seconds)." << endl;
+        }
+    }
+
+    return maxDiff;
+}
+
+
+} // end of namespace dai
