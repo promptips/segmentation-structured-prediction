@@ -416,4 +416,205 @@ bool CBP::chooseNextClampVar( InfAlg *bp, vector<size_t> &clamped_vars_list, siz
 
         size_t xi = cv.second;
         i = cv.first;
-#define V
+#define VAR_INFO (clampingVar?"variable ":"factor ")                       \
+            << i << " state " << xi                                     \
+            << " (p=" << (clampingVar?bp->beliefV(i)[xi]:bp->beliefF(i)[xi]) \
+            << ", entropy = " << (clampingVar?bp->beliefV(i):bp->beliefF(i)).entropy() \
+            << ", maxVar = "<< mvo << ")"
+        Prob b = ( clampingVar ? bp->beliefV(i).p() : bp->beliefF(i).p());
+        if( b[xi] < tiny ) {
+            cerr << "Warning, at level " << clamped_vars_list.size() << ", BBPFindClampVar found unlikely " << VAR_INFO << endl;
+            return false;
+        }
+        if( abs(b[xi] - 1) < tiny ) {
+            cerr << "Warning at level " << clamped_vars_list.size() << ", BBPFindClampVar found overly likely " << VAR_INFO << endl;
+            return false;
+        }
+
+        xis.resize( 1, xi );
+        if( clampingVar )
+            DAI_ASSERT(/*0<=xi &&*/ xi < var(i).states() );
+        else
+            DAI_ASSERT(/*0<=xi &&*/ xi < factor(i).states() );
+        DAI_IFVERB(2, "CHOOSE_BBP (num clamped = " << clamped_vars_list.size() << ") chose " << i << " state " << xi << endl);
+    } else
+        DAI_THROW(UNKNOWN_ENUM_VALUE);
+    clamped_vars_list.push_back( i );
+    return true;
+}
+
+
+void CBP::printDebugInfo() {
+    DAI_PV(_beliefsV);
+    DAI_PV(_beliefsF);
+    DAI_PV(_logZ);
+}
+
+
+pair<size_t, size_t> BBPFindClampVar( const InfAlg &in_bp, bool clampingVar, const PropertySet &bbp_props, const BBPCostFunction &cfn, Real *maxVarOut ) {
+    BBP bbp( &in_bp, bbp_props );
+    bbp.initCostFnAdj( cfn, NULL );
+    bbp.run();
+
+    // find and return the (variable,state) with the largest adj_psi_V
+    size_t argmax_var = 0;
+    size_t argmax_var_state = 0;
+    Real max_var = 0;
+    if( clampingVar ) {
+        for( size_t i = 0; i < in_bp.fg().nrVars(); i++ ) {
+            Prob adj_psi_V = bbp.adj_psi_V(i);
+            if(0) {
+                // helps to account for amount of movement possible in variable
+                // i's beliefs? seems not..
+                adj_psi_V *= in_bp.beliefV(i).entropy();
+            }
+            if(0){
+//                 adj_psi_V *= Prob(in_bp.fg().var(i).states(),1.0)-in_bp.beliefV(i).p();
+                adj_psi_V *= in_bp.beliefV(i).p();
+            }
+            // try to compensate for effect on same variable (doesn't work)
+            //     adj_psi_V[gibbs.state()[i]] -= bp_dual.beliefV(i)[gibbs.state()[i]]/10;
+            pair<size_t,Real> argmax_state = adj_psi_V.argmax();
+
+            if( i == 0 || argmax_state.second > max_var ) {
+                argmax_var = i;
+                max_var = argmax_state.second;
+                argmax_var_state = argmax_state.first;
+            }
+        }
+        DAI_ASSERT(/*0 <= argmax_var_state &&*/
+               argmax_var_state < in_bp.fg().var(argmax_var).states() );
+    } else {
+        for( size_t I = 0; I < in_bp.fg().nrFactors(); I++ ) {
+            Prob adj_psi_F = bbp.adj_psi_F(I);
+            if(0) {
+                // helps to account for amount of movement possible in variable
+                // i's beliefs? seems not..
+                adj_psi_F *= in_bp.beliefF(I).entropy();
+            }
+            // try to compensate for effect on same variable (doesn't work)
+            //     adj_psi_V[gibbs.state()[i]] -= bp_dual.beliefV(i)[gibbs.state()[i]]/10;
+            pair<size_t,Real> argmax_state = adj_psi_F.argmax();
+
+            if( I == 0 || argmax_state.second > max_var ) {
+                argmax_var = I;
+                max_var = argmax_state.second;
+                argmax_var_state = argmax_state.first;
+            }
+        }
+        DAI_ASSERT(/*0 <= argmax_var_state &&*/
+               argmax_var_state < in_bp.fg().factor(argmax_var).states() );
+    }
+    if( maxVarOut )
+        *maxVarOut = max_var;
+    return make_pair( argmax_var, argmax_var_state );
+}
+
+
+} // end of namespace dai
+
+
+/* {{{ GENERATED CODE: DO NOT EDIT. Created by
+    ./scripts/regenerate-properties include/dai/cbp.h src/cbp.cpp
+*/
+namespace dai {
+
+void CBP::Properties::set(const PropertySet &opts)
+{
+    const std::set<PropertyKey> &keys = opts.keys();
+    std::string errormsg;
+    for( std::set<PropertyKey>::const_iterator i = keys.begin(); i != keys.end(); i++ ) {
+        if( *i == "verbose" ) continue;
+        if( *i == "tol" ) continue;
+        if( *i == "updates" ) continue;
+        if( *i == "maxiter" ) continue;
+        if( *i == "rec_tol" ) continue;
+        if( *i == "max_levels" ) continue;
+        if( *i == "min_max_adj" ) continue;
+        if( *i == "choose" ) continue;
+        if( *i == "recursion" ) continue;
+        if( *i == "clamp" ) continue;
+        if( *i == "bbp_props" ) continue;
+        if( *i == "bbp_cfn" ) continue;
+        if( *i == "rand_seed" ) continue;
+        if( *i == "clamp_outfile" ) continue;
+        errormsg = errormsg + "CBP: Unknown property " + *i + "\n";
+    }
+    if( !errormsg.empty() )
+        DAI_THROWE(UNKNOWN_PROPERTY, errormsg);
+    if( !opts.hasKey("tol") )
+        errormsg = errormsg + "CBP: Missing property \"tol\" for method \"CBP\"\n";
+    if( !opts.hasKey("updates") )
+        errormsg = errormsg + "CBP: Missing property \"updates\" for method \"CBP\"\n";
+    if( !opts.hasKey("maxiter") )
+        errormsg = errormsg + "CBP: Missing property \"maxiter\" for method \"CBP\"\n";
+    if( !opts.hasKey("rec_tol") )
+        errormsg = errormsg + "CBP: Missing property \"rec_tol\" for method \"CBP\"\n";
+    if( !opts.hasKey("min_max_adj") )
+        errormsg = errormsg + "CBP: Missing property \"min_max_adj\" for method \"CBP\"\n";
+    if( !opts.hasKey("choose") )
+        errormsg = errormsg + "CBP: Missing property \"choose\" for method \"CBP\"\n";
+    if( !opts.hasKey("recursion") )
+        errormsg = errormsg + "CBP: Missing property \"recursion\" for method \"CBP\"\n";
+    if( !opts.hasKey("clamp") )
+        errormsg = errormsg + "CBP: Missing property \"clamp\" for method \"CBP\"\n";
+    if( !opts.hasKey("bbp_props") )
+        errormsg = errormsg + "CBP: Missing property \"bbp_props\" for method \"CBP\"\n";
+    if( !opts.hasKey("bbp_cfn") )
+        errormsg = errormsg + "CBP: Missing property \"bbp_cfn\" for method \"CBP\"\n";
+    if( !errormsg.empty() )
+        DAI_THROWE(NOT_ALL_PROPERTIES_SPECIFIED,errormsg);
+    if( opts.hasKey("verbose") ) {
+        verbose = opts.getStringAs<size_t>("verbose");
+    } else {
+        verbose = 0;
+    }
+    tol = opts.getStringAs<Real>("tol");
+    updates = opts.getStringAs<UpdateType>("updates");
+    maxiter = opts.getStringAs<size_t>("maxiter");
+    rec_tol = opts.getStringAs<Real>("rec_tol");
+    if( opts.hasKey("max_levels") ) {
+        max_levels = opts.getStringAs<size_t>("max_levels");
+    } else {
+        max_levels = 10;
+    }
+    min_max_adj = opts.getStringAs<Real>("min_max_adj");
+    choose = opts.getStringAs<ChooseMethodType>("choose");
+    recursion = opts.getStringAs<RecurseType>("recursion");
+    clamp = opts.getStringAs<ClampType>("clamp");
+    bbp_props = opts.getStringAs<PropertySet>("bbp_props");
+    bbp_cfn = opts.getStringAs<BBPCostFunction>("bbp_cfn");
+    if( opts.hasKey("rand_seed") ) {
+        rand_seed = opts.getStringAs<size_t>("rand_seed");
+    } else {
+        rand_seed = 0;
+    }
+    if( opts.hasKey("clamp_outfile") ) {
+        clamp_outfile = opts.getStringAs<std::string>("clamp_outfile");
+    } else {
+        clamp_outfile = "";
+    }
+}
+PropertySet CBP::Properties::get() const {
+    PropertySet opts;
+    opts.Set("verbose", verbose);
+    opts.Set("tol", tol);
+    opts.Set("updates", updates);
+    opts.Set("maxiter", maxiter);
+    opts.Set("rec_tol", rec_tol);
+    opts.Set("max_levels", max_levels);
+    opts.Set("min_max_adj", min_max_adj);
+    opts.Set("choose", choose);
+    opts.Set("recursion", recursion);
+    opts.Set("clamp", clamp);
+    opts.Set("bbp_props", bbp_props);
+    opts.Set("bbp_cfn", bbp_cfn);
+    opts.Set("rand_seed", rand_seed);
+    opts.Set("clamp_outfile", clamp_outfile);
+    return opts;
+}
+string CBP::Properties::toString() const {
+    stringstream s(stringstream::out);
+    s << "[";
+    s << "verbose=" << verbose << ",";
+    s << "tol=" << 
