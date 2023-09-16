@@ -203,4 +203,217 @@ void CBP::runRecurse( InfAlg *bp, Real orig_logZ, vector<size_t> clamped_vars_li
     // compute complement of 'xis'
     vector<size_t> cmp_xis = complement( xis, clampingVar ? var(i).states() : factor(i).states() );
 
-    /// \idea dai::CBP::runRecurse() could be implemented more efficiently with a nesting version of backupFactors/restoreFactor
+    /// \idea dai::CBP::runRecurse() could be implemented more efficiently with a nesting version of backupFactors/restoreFactors
+    // this improvement could also be done locally: backup the clamped factor in a local variable,
+    // and restore it just before we return.
+    Real lz;
+    vector<Factor> b;
+    InfAlg *bp_c = bp->clone();
+    if( clampingVar ) {
+        bp_c->fg().clampVar( i, xis );
+        bp_c->init( var(i) );
+    } else {
+        bp_c->fg().clampFactor( i, xis );
+        bp_c->init( factor(i).vars() );
+    }
+    bp_c->run();
+    _iters += bp_c->Iterations();
+
+    lz = bp_c->logZ();
+    b = bp_c->beliefs();
+
+    Real cmp_lz;
+    vector<Factor> cmp_b;
+    InfAlg *cmp_bp_c = bp->clone();
+    if( clampingVar ) {
+        cmp_bp_c->fg().clampVar( i, cmp_xis );
+        cmp_bp_c->init(var(i));
+    } else {
+        cmp_bp_c->fg().clampFactor( i, cmp_xis );
+        cmp_bp_c->init( factor(i).vars() );
+    }
+    cmp_bp_c->run();
+    _iters += cmp_bp_c->Iterations();
+
+    cmp_lz = cmp_bp_c->logZ();
+    cmp_b = cmp_bp_c->beliefs();
+
+    Real p = unSoftMax( lz, cmp_lz );
+    Real bp__d = 0.0;
+
+    if( props.recursion == Properties::RecurseType::REC_BDIFF && props.rec_tol > 0 ) {
+        vector<Factor> combined_b( mixBeliefs( p, b, cmp_b ) );
+        Real new_lz = logSumExp( lz,cmp_lz );
+        bp__d = dist( bp->beliefs(), combined_b, nrVars() );
+        if( exp( new_lz - orig_logZ) * bp__d < props.rec_tol ) {
+            num_leaves++;
+            sum_level += clamped_vars_list.size();
+            beliefs_out = combined_b;
+            lz_out = new_lz;
+            return;
+        }
+    }
+
+    // either we are not doing REC_BDIFF or the distance was large
+    // enough to recurse:
+    runRecurse( bp_c, orig_logZ, clamped_vars_list, num_leaves, choose_count, sum_level, lz, b );
+    runRecurse( cmp_bp_c, orig_logZ, clamped_vars_list, num_leaves, choose_count, sum_level, cmp_lz, cmp_b );
+
+    p = unSoftMax( lz, cmp_lz );
+
+    beliefs_out = mixBeliefs( p, b, cmp_b );
+    lz_out = logSumExp( lz, cmp_lz );
+
+    if( props.verbose >= 2 ) {
+        Real d = dist( bp->beliefs(), beliefs_out, nrVars() );
+        cerr << "Distance (clamping " << i << "): " << d;
+        if( props.recursion == Properties::RecurseType::REC_BDIFF )
+            cerr << "; bp_dual predicted " << bp__d;
+        cerr << "; max_adjoint = " << maxVar << "; logZ = " << lz_out << " (in " << bp->logZ() << ") (orig " << orig_logZ << "); p = " << p << "; level = " << clamped_vars_list.size() << endl;
+    }
+
+    delete bp_c;
+    delete cmp_bp_c;
+}
+
+
+// 'xis' must be sorted
+bool CBP::chooseNextClampVar( InfAlg *bp, vector<size_t> &clamped_vars_list, size_t &i, vector<size_t> &xis, Real *maxVarOut ) {
+    Real tiny = 1.0e-14;
+    if( props.verbose >= 3 )
+        cerr << "clamped_vars_list" << clamped_vars_list << endl;
+    if( clamped_vars_list.size() >= props.max_levels )
+        return false;
+    if( props.choose == Properties::ChooseMethodType::CHOOSE_RANDOM ) {
+        if( props.clamp == Properties::ClampType::CLAMP_VAR ) {
+            int t = 0, t1 = 100;
+            do {
+                i = rnd( nrVars() );
+                t++;
+            } while( abs( bp->beliefV(i).p().max() - 1) < tiny && t < t1 );
+            if( t == t1 ) {
+                return false;
+                // die("Too many levels requested in CBP");
+            }
+            // only pick probable values for variable
+            size_t xi;
+            do {
+                xi = rnd( var(i).states() );
+                t++;
+            } while( bp->beliefV(i).p()[xi] < tiny && t < t1 );
+            DAI_ASSERT( t < t1 );
+            xis.resize( 1, xi );
+            // DAI_ASSERT(!_clamped_vars.count(i)); // not true for >2-ary variables
+            DAI_IFVERB(2, "CHOOSE_RANDOM at level " << clamped_vars_list.size() << " chose variable " << i << " state " << xis[0] << endl);
+        } else {
+            int t = 0, t1 = 100;
+            do {
+                i = rnd( nrFactors() );
+                t++;
+            } while( abs( bp->beliefF(i).p().max() - 1) < tiny && t < t1 );
+            if( t == t1 )
+                return false;
+                // die("Too many levels requested in CBP");
+            // only pick probable values for variable
+            size_t xi;
+            do {
+                xi = rnd( factor(i).states() );
+                t++;
+            } while( bp->beliefF(i).p()[xi] < tiny && t < t1 );
+            DAI_ASSERT( t < t1 );
+            xis.resize( 1, xi );
+            // DAI_ASSERT(!_clamped_vars.count(i)); // not true for >2-ary variables
+            DAI_IFVERB(2, endl<<"CHOOSE_RANDOM chose factor "<<i<<" state "<<xis[0]<<endl);
+        }
+    } else if( props.choose == Properties::ChooseMethodType::CHOOSE_MAXENT ) {
+        if( props.clamp == Properties::ClampType::CLAMP_VAR ) {
+            Real max_ent = -1.0;
+            int win_k = -1, win_xk = -1;
+            for( size_t k = 0; k < nrVars(); k++ ) {
+                Real ent=bp->beliefV(k).entropy();
+                if( max_ent < ent ) {
+                    max_ent = ent;
+                    win_k = k;
+                    win_xk = bp->beliefV(k).p().argmax().first;
+                }
+            }
+            DAI_ASSERT( win_k >= 0 );
+            DAI_ASSERT( win_xk >= 0 );
+            i = win_k;
+            xis.resize( 1, win_xk );
+            DAI_IFVERB(2, endl<<"CHOOSE_MAXENT chose variable "<<i<<" state "<<xis[0]<<endl);
+            if( bp->beliefV(i).p()[xis[0]] < tiny ) {
+                DAI_IFVERB(2, "Warning: CHOOSE_MAXENT found unlikely state, not recursing");
+                return false;
+            }
+        } else {
+            Real max_ent = -1.0;
+            int win_k = -1, win_xk = -1;
+            for( size_t k = 0; k < nrFactors(); k++ ) {
+                Real ent = bp->beliefF(k).entropy();
+                if( max_ent < ent ) {
+                    max_ent = ent;
+                    win_k = k;
+                    win_xk = bp->beliefF(k).p().argmax().first;
+                }
+            }
+            DAI_ASSERT( win_k >= 0 );
+            DAI_ASSERT( win_xk >= 0 );
+            i = win_k;
+            xis.resize( 1, win_xk );
+            DAI_IFVERB(2, endl<<"CHOOSE_MAXENT chose factor "<<i<<" state "<<xis[0]<<endl);
+            if( bp->beliefF(i).p()[xis[0]] < tiny ) {
+                DAI_IFVERB(2, "Warning: CHOOSE_MAXENT found unlikely state, not recursing");
+                return false;
+            }
+        }
+    } else if( props.choose==Properties::ChooseMethodType::CHOOSE_BP_L1 ||
+               props.choose==Properties::ChooseMethodType::CHOOSE_BP_CFN ) {
+        bool doL1 = (props.choose == Properties::ChooseMethodType::CHOOSE_BP_L1);
+        vector<size_t> state;
+        if( !doL1 && props.bbp_cfn.needGibbsState() )
+            state = getGibbsState( bp->fg(), 2*bp->Iterations() );
+        // try clamping each variable manually
+        DAI_ASSERT( props.clamp == Properties::ClampType::CLAMP_VAR );
+        Real max_cost = 0.0;
+        int win_k = -1, win_xk = -1;
+        for( size_t k = 0; k < nrVars(); k++ ) {
+            for( size_t xk = 0; xk < var(k).states(); xk++ ) {
+                if( bp->beliefV(k)[xk] < tiny )
+                    continue;
+                InfAlg *bp1 = bp->clone();
+                bp1->clamp( k, xk );
+                bp1->init( var(k) );
+                bp1->run();
+                Real cost = 0;
+                if( doL1 )
+                    for( size_t j = 0; j < nrVars(); j++ )
+                        cost += dist( bp->beliefV(j), bp1->beliefV(j), Prob::DISTL1 );
+                else
+                    cost = props.bbp_cfn.evaluate( *bp1, &state );
+                if( cost > max_cost || win_k == -1 ) {
+                    max_cost = cost;
+                    win_k = k;
+                    win_xk = xk;
+                }
+                delete bp1;
+            }
+        }
+        DAI_ASSERT( win_k >= 0 );
+        DAI_ASSERT( win_xk >= 0 );
+        i = win_k;
+        xis.resize( 1, win_xk );
+    } else if( props.choose == Properties::ChooseMethodType::CHOOSE_BBP ) {
+        Real mvo;
+        if( !maxVarOut )
+            maxVarOut = &mvo;
+        bool clampingVar = (props.clamp == Properties::ClampType::CLAMP_VAR);
+        pair<size_t, size_t> cv = BBPFindClampVar( *bp, clampingVar, props.bbp_props, props.bbp_cfn, &mvo );
+
+        // if slope isn't big enough then don't clamp
+        if( mvo < props.min_max_adj )
+            return false;
+
+        size_t xi = cv.second;
+        i = cv.first;
+#define V
