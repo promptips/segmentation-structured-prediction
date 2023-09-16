@@ -617,4 +617,21 @@ string CBP::Properties::toString() const {
     stringstream s(stringstream::out);
     s << "[";
     s << "verbose=" << verbose << ",";
-    s << "tol=" << 
+    s << "tol=" << tol << ",";
+    s << "updates=" << updates << ",";
+    s << "maxiter=" << maxiter << ",";
+    s << "rec_tol=" << rec_tol << ",";
+    s << "max_levels=" << max_levels << ",";
+    s << "min_max_adj=" << min_max_adj << ",";
+    s << "choose=" << choose << ",";
+    s << "recursion=" << recursion << ",";
+    s << "clamp=" << clamp << ",";
+    s << "bbp_props=" << bbp_props << ",";
+    s << "bbp_cfn=" << bbp_cfn << ",";
+    s << "rand_seed=" << rand_seed << ",";
+    s << "clamp_outfile=" << clamp_outfile;
+    s << "]";
+    return s.str();
+}
+} // end of namespace dai
+/* }}} END OF GENERATED CODE */
