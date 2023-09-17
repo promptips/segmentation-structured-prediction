@@ -549,4 +549,93 @@ void MR::makekindex() {
         for(size_t j=0; j<con[i]; j++) {
             size_t ij = nb[i][j];       // ij is the j'th neighbour of spin i
             size_t k=0;
-            w
+            while( nb[ij][k] != i )
+                k++;
+            kindex[i][j] = k;   // the j'th neighbour of spin i has spin i as its k'th neighbour
+        }
+}
+
+
+Factor MR::beliefV( size_t i ) const {
+    if( supported ) {
+        Prob x(2);
+        x[0] = 0.5 - Mag[i] / 2.0;
+        x[1] = 0.5 + Mag[i] / 2.0;
+
+        return Factor( var(i), x );
+    } else
+        return Factor();
+}
+
+
+vector<Factor> MR::beliefs() const {
+    vector<Factor> result;
+    for( size_t i = 0; i < nrVars(); i++ )
+        result.push_back( belief( var(i) ) );
+    return result;
+}
+
+
+
+MR::MR( const FactorGraph &fg, const PropertySet &opts ) : DAIAlgFG(fg), supported(true), _maxdiff(0.0), _iters(0) {
+    setProperties( opts );
+
+    // check whether all vars in fg are binary
+    // check whether connectivity is <= kmax
+    for( size_t i = 0; i < fg.nrVars(); i++ )
+        if( (fg.var(i).states() > 2) || (fg.delta(i).size() > kmax) ) {
+            supported = false;
+            break;
+        }
+
+    if( !supported )
+        DAI_THROWE(NOT_IMPLEMENTED,"MR only supports binary variables with low connectivity");
+
+    // check whether all interactions are pairwise or single
+    for( size_t I = 0; I < fg.nrFactors(); I++ )
+        if( fg.factor(I).vars().size() > 2 ) {
+            supported = false;
+            break;
+        }
+
+    if( !supported )
+        DAI_THROWE(NOT_IMPLEMENTED,"MR does not support higher order interactions (only single and pairwise are supported)");
+
+    // create w and th
+    size_t Nin = fg.nrVars();
+
+    Real *w = new Real[Nin*Nin];
+    Real *th = new Real[Nin];
+
+    for( size_t i = 0; i < Nin; i++ ) {
+        th[i] = 0.0;
+        for( size_t j = 0; j < Nin; j++ )
+            w[i*Nin+j] = 0.0;
+    }
+
+    for( size_t I = 0; I < fg.nrFactors(); I++ ) {
+        const Factor &psi = fg.factor(I);
+        if( psi.vars().size() == 1 ) {
+            size_t i = fg.findVar( *(psi.vars().begin()) );
+            th[i] += 0.5 * log(psi[1] / psi[0]);
+        } else if( psi.vars().size() == 2 ) {
+            size_t i = fg.findVar( *(psi.vars().begin()) );
+            VarSet::const_iterator jit = psi.vars().begin();
+            size_t j = fg.findVar( *(++jit) );
+
+            w[i*Nin+j] += 0.25 * log(psi[3] * psi[0] / (psi[2] * psi[1]));
+            w[j*Nin+i] += 0.25 * log(psi[3] * psi[0] / (psi[2] * psi[1]));
+
+            th[i] += 0.25 * log(psi[3] / psi[2] * psi[1] / psi[0]);
+            th[j] += 0.25 * log(psi[3] / psi[1] * psi[2] / psi[0]);
+        }
+    }
+
+    init(Nin, w, th);
+
+    delete th;
+    delete w;
+}
+
+
+} // end of namespace dai
