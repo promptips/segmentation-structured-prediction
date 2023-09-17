@@ -23,4 +23,23 @@ size_t calcLinearState( const VarSet &vs, const std::map<Var, size_t> &state ) {
     size_t st = 0;
     for( VarSet::const_iterator v = vs.begin(); v != vs.end(); v++ ) {
         std::map<Var, size_t>::const_iterator m = state.find( *v );
-        if( 
+        if( m != state.end() )
+            st += prod * m->second;
+        prod *= v->states();
+    }
+    return st;
+}
+
+
+std::map<Var, size_t> calcState( const VarSet &vs, size_t linearState ) {
+    std::map<Var, size_t> state;
+    for( VarSet::const_iterator v = vs.begin(); v != vs.end(); v++ ) {
+        state[*v] = linearState % v->states();
+        linearState /= v->states();
+    }
+    DAI_ASSERT( linearState == 0 );
+    return state;
+}
+
+
+} // end of namespace dai
