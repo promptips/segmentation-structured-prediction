@@ -318,4 +318,278 @@ private:
 
 
 	void RelabelSupervoxels(
-		con
+		const int&					width,
+		const int&					height,
+		const int&					depth,
+		sidType**&	       				labels,
+		int&						numlabels);
+
+        void RelabelStraySupervoxels(
+                                     const int&					width,
+                                     const int&					height,
+                                     const int&					depth,
+                                     sidType**&					labels,
+                                     int&					numlabels,
+                                     const int&					STEP);
+
+	void FindNext(
+		sidType**&     					labels,
+		sidType**&	       				nlabels,
+		const int&					depth,
+		const int&					height,
+		const int&					width,
+		const int&					d,
+		const int&					h,
+		const int&					w,
+		const sidType&					lab)
+	{
+		sidType oldlab = labels[d][h*width+w];
+		for( int i = 0; i < 6; i++ )
+		{
+			int z = d+dz6[i];int y = h+dy6[i];int x = w+dx6[i];
+			if( (z < depth && z >= 0) && (y < height && y >= 0) && (x < width && x >= 0) )
+			{
+				int ind = y*width+x;
+				//if(nlabels[z][ind] < 0 && labels[z][ind] == oldlab )
+                                if(nlabels[z][ind] == UNDEFINED_LABEL && labels[z][ind] == oldlab )
+				{
+					nlabels[z][ind] = lab;
+					FindNext(labels, nlabels, depth, height, width, z, y, x, lab);
+				}
+			}
+		}
+	}
+
+	void FindNext(
+		sidType**&     					labels,
+		sidType**&	       				nlabels,
+		const int&					depth,
+		const int&					height,
+		const int&					width,
+                std::stack<sPixel>& listPixels,
+		const sidType&					lab)
+	{
+          sPixel pix;
+          int d,h,w;
+          while(!listPixels.empty())
+            {
+              pix = listPixels.top();
+              listPixels.pop();
+              d = pix.z;
+              h = pix.y;
+              w = pix.x;
+              sidType oldlab = labels[d][h*width+w];
+              for( int i = 0; i < 6; i++ )
+		{
+                  int z = d+dz6[i];int y = h+dy6[i];int x = w+dx6[i];
+                  if( (z < depth && z >= 0) && (y < height && y >= 0) && (x < width && x >= 0) )
+                    {
+                      int ind = y*width+x;
+                      //if(nlabels[z][ind] < 0 && labels[z][ind] == oldlab )
+                      if(nlabels[z][ind] == UNDEFINED_LABEL && labels[z][ind] == oldlab )
+                        {
+                          nlabels[z][ind] = lab;
+                          sPixel newPix;
+                          newPix.x = x;
+                          newPix.y = y;
+                          newPix.z = z;
+                          listPixels.push(newPix);
+                        }
+                    }
+		}
+            }
+	}
+
+
+	//===========================================================================
+	///	CountAndRelabel
+	///
+	/// If there are labels that are skipped, we need to relabel to have all the
+	/// labels in increasing order. At the same time, return the number of labels.
+	//===========================================================================
+	void CountAndRelabel(
+		sidType*&      					labels,
+		int&						numlabels) 
+	{
+		int sz = m_width*m_height;
+		int maxlabel(-1);
+		{for(int i = 0; i < sz; i++)
+		{
+			if( labels[i] > maxlabel) maxlabel = labels[i];
+		}}
+		vector<int> currentlabels(maxlabel+1, -1);
+		int brandnewlabel(0);
+		{for( int s = 0; s < sz; s++ )
+		{
+			if( 0 > currentlabels[labels[s]] )
+			{
+				currentlabels[labels[s]] = brandnewlabel;
+				brandnewlabel++;
+			}
+		}}
+		{for( int s = 0; s < sz; s++ )
+		{
+			labels[s] = currentlabels[labels[s]];
+		}}
+		numlabels = brandnewlabel;
+	}
+
+	//===========================================================================
+	///	CountAndRelabel
+	///
+	/// If there are labels that are skipped, we need to relabel to have all the
+	/// labels in increasing order. At the same time, return the number of labels.
+	//===========================================================================
+	void CountAndRelabel(
+		sidType**&	       				labels,
+		int&						numlabels) 
+	{
+		int sz = m_width*m_height;
+		int maxlabel(-1);
+		{for( int d = 0; d < m_depth; d++ )
+		{
+			for(int i = 0; i < sz; i++)
+			{
+				if( labels[d][i] > maxlabel) maxlabel = labels[d][i];
+			}
+		}}
+
+		vector<int> currentlabels(maxlabel+1, -1);
+		int brandnewlabel(0);
+		{for( int d = 0; d < m_depth; d++ )
+		{
+			for( int s = 0; s < sz; s++ )
+			{
+				if( 0 > currentlabels[labels[d][s]] )
+				{
+					currentlabels[labels[d][s]] = brandnewlabel;
+					brandnewlabel++;
+				}
+			}
+		}}
+		{for( int d = 0; d < m_depth; d++ )
+		{
+			for( int s = 0; s < sz; s++ )
+			{
+				labels[d][s] = currentlabels[labels[d][s]];
+			}
+		}}
+		numlabels = brandnewlabel;
+	}
+
+        //===========================================================================
+	///	FindNext
+	///
+	///	Helper function for RelabelStraySupervoxels. Overloaded version.
+	//===========================================================================
+	void FindNext(
+                      sidType**&     			labels,
+		sidType**&	      				nlabels,
+		const int&					depth,
+		const int&					height,
+		const int&					width,
+		const int&					d,
+		const int&					h,
+		const int&					w,
+		const sidType&					lab,
+		int*&						xvec,
+		int*&						yvec,
+		int*&						zvec,
+		int&						count)
+	{
+		sidType oldlab = labels[d][h*width+w];
+		for( int i = 0; i < 10; i++ )
+		{
+			int z = d+dz10[i];
+			int y = h+dy10[i];
+			int x = w+dx10[i];
+			if( (z < depth && z >= 0) && (y < height && y >= 0) && (x < width && x >= 0) )
+			{
+				int ind = y*width+x;
+				//if(nlabels[z][ind] < 0 && labels[z][ind] == oldlab )
+                                if(nlabels[z][ind] == UNDEFINED_LABEL && labels[z][ind] == oldlab )
+				{
+					xvec[count] = x;
+					yvec[count] = y;
+					zvec[count] = z;
+					count++;
+					nlabels[z][ind] = lab;
+					FindNext(labels, nlabels, depth, height, width, z, y, x, lab, xvec, yvec, zvec, count);
+				}
+			}
+		}
+	}
+
+        //===========================================================================
+	///	FindNext
+	///     Modified by Al
+	///	Helper function for RelabelStraySupervoxels. Overloaded version.
+	//===========================================================================
+	void FindNext(
+		sidType**&     					labels,
+		sidType**&	       				nlabels,
+		const int&					depth,
+		const int&					height,
+		const int&					width,
+                std::stack<sPixel>& listPixels,
+		const sidType&					lab,
+		int*&						xvec,
+		int*&						yvec,
+		int*&						zvec,
+		int&						count)
+	{
+          sPixel pix;
+          int d,h,w;
+          while(!listPixels.empty())
+            {
+              pix = listPixels.top();
+              listPixels.pop();
+              d = pix.z;
+              h = pix.y;
+              w = pix.x;
+              sidType oldlab = labels[d][h*width+w];
+              for( int i = 0; i < 10; i++ )
+		{
+                  int z = d+dz10[i];
+                  int y = h+dy10[i];
+                  int x = w+dx10[i];
+                  if( (z < depth && z >= 0) && (y < height && y >= 0) && (x < width && x >= 0) )
+                    {
+                      int ind = y*width+x;
+                      //if(nlabels[z][ind] < 0 && labels[z][ind] == oldlab )
+                      if(nlabels[z][ind] == UNDEFINED_LABEL && labels[z][ind] == oldlab )
+                        {
+                          xvec[count] = x;
+                          yvec[count] = y;
+                          zvec[count] = z;
+                          count++;
+
+                          nlabels[z][ind] = lab;
+                          sPixel newPix;
+                          newPix.x = x;
+                          newPix.y = y;
+                          newPix.z = z;
+                          listPixels.push(newPix);
+                        }
+                    }
+		}
+            }
+	}
+
+private:
+	int										m_width;
+	int										m_height;
+	int										m_depth;
+
+	double*									m_lvec;
+	double*									m_avec;
+	double*									m_bvec;
+
+	double**								m_lvecvec;
+	double**								m_avecvec;
+	double**								m_bvecvec;
+
+        bool freeMem;
+};
+
+#endif // !defined(_LKM_H_INCLUDED_)
