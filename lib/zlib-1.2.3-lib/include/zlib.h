@@ -1124,3 +1124,235 @@ ZEXTERN int ZEXPORTVA   gzprintf OF((gzFile file, const char *format, ...));
 /*
      Converts, formats, and writes the args to the compressed file under
    control of the format string, as in fprintf. gzprintf returns the number of
+   uncompressed bytes actually written (0 in case of error).  The number of
+   uncompressed bytes written is limited to 4095. The caller should assure that
+   this limit is not exceeded. If it is exceeded, then gzprintf() will return
+   return an error (0) with nothing written. In this case, there may also be a
+   buffer overflow with unpredictable consequences, which is possible only if
+   zlib was compiled with the insecure functions sprintf() or vsprintf()
+   because the secure snprintf() or vsnprintf() functions were not available.
+*/
+
+ZEXTERN int ZEXPORT gzputs OF((gzFile file, const char *s));
+/*
+      Writes the given null-terminated string to the compressed file, excluding
+   the terminating null character.
+      gzputs returns the number of characters written, or -1 in case of error.
+*/
+
+ZEXTERN char * ZEXPORT gzgets OF((gzFile file, char *buf, int len));
+/*
+      Reads bytes from the compressed file until len-1 characters are read, or
+   a newline character is read and transferred to buf, or an end-of-file
+   condition is encountered.  The string is then terminated with a null
+   character.
+      gzgets returns buf, or Z_NULL in case of error.
+*/
+
+ZEXTERN int ZEXPORT    gzputc OF((gzFile file, int c));
+/*
+      Writes c, converted to an unsigned char, into the compressed file.
+   gzputc returns the value that was written, or -1 in case of error.
+*/
+
+ZEXTERN int ZEXPORT    gzgetc OF((gzFile file));
+/*
+      Reads one byte from the compressed file. gzgetc returns this byte
+   or -1 in case of end of file or error.
+*/
+
+ZEXTERN int ZEXPORT    gzungetc OF((int c, gzFile file));
+/*
+      Push one character back onto the stream to be read again later.
+   Only one character of push-back is allowed.  gzungetc() returns the
+   character pushed, or -1 on failure.  gzungetc() will fail if a
+   character has been pushed but not read yet, or if c is -1. The pushed
+   character will be discarded if the stream is repositioned with gzseek()
+   or gzrewind().
+*/
+
+ZEXTERN int ZEXPORT    gzflush OF((gzFile file, int flush));
+/*
+     Flushes all pending output into the compressed file. The parameter
+   flush is as in the deflate() function. The return value is the zlib
+   error number (see function gzerror below). gzflush returns Z_OK if
+   the flush parameter is Z_FINISH and all output could be flushed.
+     gzflush should be called only when strictly necessary because it can
+   degrade compression.
+*/
+
+ZEXTERN z_off_t ZEXPORT    gzseek OF((gzFile file,
+                                      z_off_t offset, int whence));
+/*
+      Sets the starting position for the next gzread or gzwrite on the
+   given compressed file. The offset represents a number of bytes in the
+   uncompressed data stream. The whence parameter is defined as in lseek(2);
+   the value SEEK_END is not supported.
+     If the file is opened for reading, this function is emulated but can be
+   extremely slow. If the file is opened for writing, only forward seeks are
+   supported; gzseek then compresses a sequence of zeroes up to the new
+   starting position.
+
+      gzseek returns the resulting offset location as measured in bytes from
+   the beginning of the uncompressed stream, or -1 in case of error, in
+   particular if the file is opened for writing and the new starting position
+   would be before the current position.
+*/
+
+ZEXTERN int ZEXPORT    gzrewind OF((gzFile file));
+/*
+     Rewinds the given file. This function is supported only for reading.
+
+   gzrewind(file) is equivalent to (int)gzseek(file, 0L, SEEK_SET)
+*/
+
+ZEXTERN z_off_t ZEXPORT    gztell OF((gzFile file));
+/*
+     Returns the starting position for the next gzread or gzwrite on the
+   given compressed file. This position represents a number of bytes in the
+   uncompressed data stream.
+
+   gztell(file) is equivalent to gzseek(file, 0L, SEEK_CUR)
+*/
+
+ZEXTERN int ZEXPORT gzeof OF((gzFile file));
+/*
+     Returns 1 when EOF has previously been detected reading the given
+   input stream, otherwise zero.
+*/
+
+ZEXTERN int ZEXPORT gzdirect OF((gzFile file));
+/*
+     Returns 1 if file is being read directly without decompression, otherwise
+   zero.
+*/
+
+ZEXTERN int ZEXPORT    gzclose OF((gzFile file));
+/*
+     Flushes all pending output if necessary, closes the compressed file
+   and deallocates all the (de)compression state. The return value is the zlib
+   error number (see function gzerror below).
+*/
+
+ZEXTERN const char * ZEXPORT gzerror OF((gzFile file, int *errnum));
+/*
+     Returns the error message for the last error which occurred on the
+   given compressed file. errnum is set to zlib error number. If an
+   error occurred in the file system and not in the compression library,
+   errnum is set to Z_ERRNO and the application may consult errno
+   to get the exact error code.
+*/
+
+ZEXTERN void ZEXPORT gzclearerr OF((gzFile file));
+/*
+     Clears the error and end-of-file flags for file. This is analogous to the
+   clearerr() function in stdio. This is useful for continuing to read a gzip
+   file that is being written concurrently.
+*/
+
+                        /* checksum functions */
+
+/*
+     These functions are not related to compression but are exported
+   anyway because they might be useful in applications using the
+   compression library.
+*/
+
+ZEXTERN uLong ZEXPORT adler32 OF((uLong adler, const Bytef *buf, uInt len));
+/*
+     Update a running Adler-32 checksum with the bytes buf[0..len-1] and
+   return the updated checksum. If buf is NULL, this function returns
+   the required initial value for the checksum.
+   An Adler-32 checksum is almost as reliable as a CRC32 but can be computed
+   much faster. Usage example:
+
+     uLong adler = adler32(0L, Z_NULL, 0);
+
+     while (read_buffer(buffer, length) != EOF) {
+       adler = adler32(adler, buffer, length);
+     }
+     if (adler != original_adler) error();
+*/
+
+ZEXTERN uLong ZEXPORT adler32_combine OF((uLong adler1, uLong adler2,
+                                          z_off_t len2));
+/*
+     Combine two Adler-32 checksums into one.  For two sequences of bytes, seq1
+   and seq2 with lengths len1 and len2, Adler-32 checksums were calculated for
+   each, adler1 and adler2.  adler32_combine() returns the Adler-32 checksum of
+   seq1 and seq2 concatenated, requiring only adler1, adler2, and len2.
+*/
+
+ZEXTERN uLong ZEXPORT crc32   OF((uLong crc, const Bytef *buf, uInt len));
+/*
+     Update a running CRC-32 with the bytes buf[0..len-1] and return the
+   updated CRC-32. If buf is NULL, this function returns the required initial
+   value for the for the crc. Pre- and post-conditioning (one's complement) is
+   performed within this function so it shouldn't be done by the application.
+   Usage example:
+
+     uLong crc = crc32(0L, Z_NULL, 0);
+
+     while (read_buffer(buffer, length) != EOF) {
+       crc = crc32(crc, buffer, length);
+     }
+     if (crc != original_crc) error();
+*/
+
+ZEXTERN uLong ZEXPORT crc32_combine OF((uLong crc1, uLong crc2, z_off_t len2));
+
+/*
+     Combine two CRC-32 check values into one.  For two sequences of bytes,
+   seq1 and seq2 with lengths len1 and len2, CRC-32 check values were
+   calculated for each, crc1 and crc2.  crc32_combine() returns the CRC-32
+   check value of seq1 and seq2 concatenated, requiring only crc1, crc2, and
+   len2.
+*/
+
+
+                        /* various hacks, don't look :) */
+
+/* deflateInit and inflateInit are macros to allow checking the zlib version
+ * and the compiler's view of z_stream:
+ */
+ZEXTERN int ZEXPORT deflateInit_ OF((z_streamp strm, int level,
+                                     const char *version, int stream_size));
+ZEXTERN int ZEXPORT inflateInit_ OF((z_streamp strm,
+                                     const char *version, int stream_size));
+ZEXTERN int ZEXPORT deflateInit2_ OF((z_streamp strm, int  level, int  method,
+                                      int windowBits, int memLevel,
+                                      int strategy, const char *version,
+                                      int stream_size));
+ZEXTERN int ZEXPORT inflateInit2_ OF((z_streamp strm, int  windowBits,
+                                      const char *version, int stream_size));
+ZEXTERN int ZEXPORT inflateBackInit_ OF((z_streamp strm, int windowBits,
+                                         unsigned char FAR *window,
+                                         const char *version,
+                                         int stream_size));
+#define deflateInit(strm, level) \
+        deflateInit_((strm), (level),       ZLIB_VERSION, sizeof(z_stream))
+#define inflateInit(strm) \
+        inflateInit_((strm),                ZLIB_VERSION, sizeof(z_stream))
+#define deflateInit2(strm, level, method, windowBits, memLevel, strategy) \
+        deflateInit2_((strm),(level),(method),(windowBits),(memLevel),\
+                      (strategy),           ZLIB_VERSION, sizeof(z_stream))
+#define inflateInit2(strm, windowBits) \
+        inflateInit2_((strm), (windowBits), ZLIB_VERSION, sizeof(z_stream))
+#define inflateBackInit(strm, windowBits, window) \
+        inflateBackInit_((strm), (windowBits), (window), \
+        ZLIB_VERSION, sizeof(z_stream))
+
+
+#if !defined(ZUTIL_H) && !defined(NO_DUMMY_DECL)
+    struct internal_state {int dummy;}; /* hack for buggy compilers */
+#endif
+
+ZEXTERN const char   * ZEXPORT zError           OF((int));
+ZEXTERN int            ZEXPORT inflateSyncPoint OF((z_streamp z));
+ZEXTERN const uLongf * ZEXPORT get_crc_table    OF((void));
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* ZLIB_H */
