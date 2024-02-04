@@ -156,4 +156,156 @@ int main(int argc, char* argv[])
   else
     {
       printf("Error : no filename given as input");
-     
+      printf("Usage : %s image_name <number_of_superpixels> <spatial_proximity_weight>\n",argv[0]);
+      return -1;
+    }
+
+  int K = 100;
+  if(argc > 2)
+    K = atoi(argv[2]);
+
+  double M = 10.0;
+  if(argc > 3)
+    M = atof(argv[3]);
+
+  int numlabels = 10;
+  int width(0), height(0);
+
+#ifdef WINDOWS
+  // FIXME : DOES NOT WORK !!!
+  vector<UINT> ubuff(0);
+  BMPhandler bh;
+  bh.GetUINTBuffer(string(intput_file), ubuff, width, height);
+
+  vector<int> labels(0);//will contain unique labels for segments.
+  const int K = 10;
+  LKM lkm;
+  lkm.DoSuperpixelSegmentation(ubuff, width, height, labels, numlabels, K, M);
+
+  DrawContoursAroundSegments(ubuff, labels, width, height, 0xff0000);//0xff0000 draws red contours
+  //DrawContoursAroundSegments(ubuff, labels, width, height, 0x0000ff);//0xff0000 draws red contours
+
+  bh.SaveUINTBuffer(ubuff, width, height, string("myfile.bmp"), savepath /*, "_optional_suffiex.bmp"*/);
+
+#else
+  //IplImage* img = cvLoadImage(input_file,CV_LOAD_IMAGE_COLOR);
+  IplImage* img = cvLoadImage(input_file);
+  if(!img)
+    {
+      printf("Error while opening %s\n", input_file);
+      return -1;
+    }
+
+  width = img->width;
+  height = img->height;
+  int sz = height*width;
+
+  int STEP = 10;//STEP decides superpixel size (which will roughly be STEP^2 pixels)
+
+  // HACK AL
+  if(argc > 2)
+    STEP = atoi(argv[2]);
+  // HACK AL
+
+  K = ((width*height)/(double)(STEP*STEP)+0.5);
+
+  printf("Image loaded %d\n",img->nChannels);
+
+
+  UINT* ubuff = new UINT[sz];
+  UINT pValue;
+  char c;
+  UINT r,g,b;
+  int idx = 0;
+  for(int j=0;j<img->height;j++)
+    for(int i=0;i<img->width;i++)
+      {
+        if(img->nChannels == 3)
+          {
+            //pValue = ((UINT*)(img->imageData + img->widthStep*(j)))[(i)*img->nChannels];
+            // image is assumed to have data in BGR order
+            b = ((uchar*)(img->imageData + img->widthStep*(j)))[(i)*img->nChannels];
+            g = ((uchar*)(img->imageData + img->widthStep*(j)))[(i)*img->nChannels+1];
+            r = ((uchar*)(img->imageData + img->widthStep*(j)))[(i)*img->nChannels+2];
+            pValue = b | (g << 8) | (r << 16);
+          }
+        else if(img->nChannels == 1)
+          {
+            c = ((uchar*)(img->imageData + img->widthStep*(j)))[(i)*img->nChannels];
+            pValue = c | (c << 8) | (c << 16);
+          }
+        else
+          {
+            printf("Unknown number of channels %d\n", img->nChannels);
+            return -1;
+          }          
+        ubuff[idx] = pValue;
+        idx++;
+      }
+
+  sidType* labels = new sidType[sz]; //will contain unique labels for segments.
+  LKM lkm;
+
+  printf("Generating superpixels. STEP=%d, M=%f\n", STEP, M);
+  lkm.DoSuperpixelSegmentation(ubuff, width, height, labels, numlabels, STEP, M);
+
+  printf("Draw Contours Around Segments\n");
+  DrawContoursAroundSegments(ubuff, labels, width, height, 0xff0000);//0xff0000 draws red contours
+  //DrawContoursAroundSegments(ubuff, labels, width, height,0xaeacac);
+
+  //string imageFileName = getNameFromPathWithoutExtension(string(input_file));
+  //imageFileName += "_slic.png";
+  stringstream imageFileName;
+  imageFileName << getNameFromPathWithoutExtension(string(input_file));
+  imageFileName << "_slic_";
+  imageFileName << STEP << "_" << M;
+  imageFileName << ".png";
+
+  printf("Saving image %s\n",imageFileName.str().c_str());
+  SaveImage(ubuff, width, height,
+            imageFileName.str().c_str());
+
+  /*
+  string labelFileName2 = getNameFromPathWithoutExtension(string(input_file));
+  labelFileName2 += "a.dat";
+  printf("Saving output file %s\n",labelFileName2.c_str());
+  SaveUINTBuffer(ubuff, width, height, string("myfile.bmp"),
+                 imageFileName.c_str(),"",labels, labelFileName2);
+  */
+
+  //string labelDir = "labels/";
+  string labelDir = "";
+
+  
+  string labelFileName = getNameFromPathWithoutExtension(string(input_file));
+  labelFileName += ".dat";
+  printf("Saving labels %s%s\n",labelDir.c_str(),labelFileName.c_str());
+  lkm.SaveLabels(labels,
+                 (const int)width, (const int)height,
+                 labelFileName,
+                 labelDir);
+  
+
+  /*
+  string labelFileNameTxt = getNameFromPathWithoutExtension(string(input_file));
+  labelFileNameTxt += ".seg";
+  printf("Saving text labels %s%s\n",labelDir.c_str(),labelFileNameTxt.c_str());
+  lkm.SaveLabels_Text(labels,
+                      (const int)width, (const int)height,
+                      labelFileNameTxt,
+                      labelDir);
+  */
+
+  //string adjFileName = "neighbors/" + labelFileName;
+  //printf("Saving adjacency matrix %s\n",adjFileName.c_str());
+  //lkm.SaveAdjacencyMatrix(labels,numlabels,width, height,adjFileName);
+
+  delete[] ubuff;
+  delete[] labels;
+
+#endif
+
+  printf("Done!\n");
+
+  return 0;
+}
